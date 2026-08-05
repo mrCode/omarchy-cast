@@ -21,7 +21,11 @@ class Config:
     airplay_port_range: str = "60000-60010"
     airplay_bitrate: int = 0
     airplay_code: str = ""
-    cast_http_port: int = 0
+    # Fixed, not ephemeral: the receiver connects INTO this port to fetch the
+    # stream, so a random port in the ephemeral range cannot be allowed
+    # through a firewall ahead of time. Set to 0 only if you have no
+    # firewall and want the OS to pick.
+    cast_http_port: int = 8010
     # 8000 kbps measured at ~7 Mbps actual on 2560x1600@30. Without an explicit
     # bitrate, rate-control=cbr auto-calculated ~21 Mbps.
     cast_bitrate: int = 8000

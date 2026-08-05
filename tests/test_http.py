@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from omarchy_cast.capture.http import StreamServer, format_headers, local_address_for
 
 
@@ -126,3 +128,24 @@ async def test_stop_closes_clients():
     reader, writer, _ = await connect_and_read_headers(port)
     await server.stop()
     assert server.client_count == 0
+
+
+async def test_falls_back_when_the_fixed_port_is_taken():
+    """A busy port must degrade to ephemeral, not kill the cast outright."""
+    blocker = StreamServer("127.0.0.1", 0)
+    taken = await blocker.start()
+    try:
+        server = StreamServer("127.0.0.1", taken)
+        port = await server.start()
+        assert port != taken
+        assert port > 0
+        await server.stop()
+    finally:
+        await blocker.stop()
+
+
+async def test_explicit_zero_port_still_raises_on_real_bind_errors():
+    """With port 0 there is nothing to fall back to, so errors must surface."""
+    server = StreamServer("203.0.113.1", 0)  # not a local address
+    with pytest.raises(OSError):
+        await server.start()

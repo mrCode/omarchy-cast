@@ -104,8 +104,20 @@ sudo ufw allow proto tcp from 192.168.1.0/24 to any port 60000:60010
 sudo ufw allow proto udp from 192.168.1.0/24 to any port 60000:60010
 ```
 
-Replace `192.168.1.0/24` with your own subnet. Scope it to the receiver's IP
+Chromecast needs one too. The receiver fetches the video *from* this machine
+over HTTP, so the stream port must be reachable:
+
+```bash
+sudo ufw allow proto tcp from 192.168.1.0/24 to any port 8010
+```
+
+Replace `192.168.1.0/24` with your own subnet. Scope these to the receiver's IP
 instead if you prefer a tighter rule — but remember DHCP can move it.
+
+`8010` is `cast.http_port` from the config. It is a fixed port on purpose: an
+ephemeral one lands somewhere in 32768–60999 and cannot be allowed through a
+firewall in advance, which breaks casting in a way that looks like the receiver
+rejecting the stream.
 
 ## Waybar
 

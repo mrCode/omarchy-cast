@@ -70,3 +70,14 @@ def test_configs_do_not_share_ranking_list():
     a, b = Config(), Config()
     a.encoder_ranking.append("bogus")
     assert "bogus" not in b.encoder_ranking
+
+
+def test_cast_http_port_is_fixed_not_ephemeral(tmp_path):
+    """The receiver connects INTO this port, so it must be firewallable.
+
+    An ephemeral port lands in 32768-60999 and cannot be allowed through a
+    firewall ahead of time, which silently breaks casting.
+    """
+    port = load_config(tmp_path / "missing.toml").cast_http_port
+    assert port != 0
+    assert not (32768 <= port <= 60999)

@@ -52,7 +52,25 @@ class StreamServer:
         return len(self._writers)
 
     async def start(self) -> int:
-        self._server = await asyncio.start_server(self._on_client, self.host, self.port)
+        try:
+            self._server = await asyncio.start_server(
+                self._on_client, self.host, self.port
+            )
+        except OSError:
+            if not self.port:
+                raise
+            # Falling back keeps casting possible, but the receiver now has to
+            # reach a random port, which a firewall will not have open.
+            log.warning(
+                "port %s unavailable; falling back to an ephemeral port. If a "
+                "firewall is active the receiver may not be able to reach the "
+                "stream -- free that port or set cast.http_port in your config.",
+                self.port,
+            )
+            self.port = 0
+            self._server = await asyncio.start_server(
+                self._on_client, self.host, 0
+            )
         self.port = self._server.sockets[0].getsockname()[1]
         return self.port
 
