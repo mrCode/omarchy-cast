@@ -11,6 +11,7 @@ depends=(
   'python-pychromecast'
   'python-zeroconf'
   'python-gobject'
+  'python-textual'
   'gst-python'
   'gstreamer'
   'gst-plugins-base'

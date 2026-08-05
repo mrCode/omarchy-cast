@@ -98,7 +98,7 @@ the socket is absent. Nothing runs while not casting.
 ```
 omarchy_cast/
   core/
-    daemon.py      — asyncio event loop, socket API, session registry
+    daemon.py      — asyncio event loop, socket API, session registry, notifier
     session.py     — Session: device + backend + state + stats
     discovery.py   — one zeroconf instance, two browsers, normalized Device
     config.py      — TOML at ~/.config/omarchy-cast/config.toml
@@ -115,6 +115,7 @@ omarchy_cast/
     waybar.py      — JSON status output
   tui/
     app.py         — Textual client
+    model.py       — presentation logic, tested without a terminal
 ```
 
 ### Shared discovery
@@ -185,6 +186,7 @@ an actionable message, never an unhandled traceback.
 | Another sender takes the Chromecast | pychromecast status callback ends the session cleanly. |
 | No hardware encoder available | Fall back to x264 zero-latency, warn once, do not fail. |
 | Device disappears from mDNS mid-session | Session FAILED with "device went offline". |
+| doubletake dies mid-stream | A per-session supervisor polls `status`; on an unexpected drop the session goes FAILED and a mako notification fires. AWAITING_PIN is exempt, since waiting on a PIN can last minutes. |
 
 ## Testing
 
@@ -217,13 +219,18 @@ the `omarchy-prayer` pattern, with a separate `aur-omarchy-cast` workspace.
 
 ## Delivery order
 
-**MVP:** discovery, both backends, CLI, walker menu, waybar indicator, config,
-AUR package.
+**MVP (done):** discovery, both backends, CLI, walker menu, waybar indicator,
+config.
 
-**Immediately after:** the TUI. It is a second client of a socket API that
-already exists, so it does not block a first working version.
+**Follow-up (done):** the TUI, and supervision of live streams so a mid-session
+doubletake crash is detected rather than leaving a session STREAMING forever.
 
-Reviewed after the MVP is in real use, before deciding on v2 scope.
+**Deferred:** AUR packaging. The PKGBUILD exists but publishing waits until the
+Cast backend has been exercised against real hardware and upstream doubletake
+#26 lands, since shipping a package whose AirPlay path fails on any
+password-protected receiver would generate bug reports we cannot act on.
+
+Reviewed after the result is in real use, before deciding on v2 scope.
 
 ## Risks
 

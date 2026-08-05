@@ -8,11 +8,12 @@ version = "0.1.0"
 description = "Desktop mirroring for Omarchy to AirPlay and Google Cast receivers"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-dependencies = ["PyChromecast>=14", "zeroconf>=0.140"]
+dependencies = ["PyChromecast>=14", "zeroconf>=0.140", "textual>=1.0"]
 
 [project.scripts]
 omarchy-cast = "omarchy_cast.cli.main:main"
 omarchy-castd = "omarchy_cast.core.daemon:main"
+omarchy-cast-tui = "omarchy_cast.tui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["omarchy_cast*"]

@@ -53,6 +53,20 @@ omarchy-cast stop
 `omarchy-cast menu` opens a walker picker of discovered receivers and starts the
 one you choose. `omarchy-cast status` shows what is running.
 
+### TUI
+
+```bash
+omarchy-cast-tui
+```
+
+A full-screen view of every receiver and its live state, refreshed every two
+seconds. `Enter` starts the highlighted device, `s` stops, `a` adds one by
+address, `r` refreshes, `q` quits. PIN prompts appear inline when a receiver
+asks for one.
+
+It is just another client of the same daemon, so the TUI, the CLI, the menu and
+the waybar indicator always agree.
+
 ### When discovery finds nothing
 
 mDNS is not reliable. Some access points do not forward multicast between

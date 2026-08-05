@@ -31,6 +31,7 @@ check_dep gst-inspect-1.0 "pacman -S gstreamer"
 check_python_mod pychromecast "pacman -S python-pychromecast"
 check_python_mod zeroconf     "pacman -S python-zeroconf"
 check_python_mod gi           "pacman -S python-gobject"
+check_python_mod textual      "pacman -S python-textual"
 
 # gst-plugin-va is NOT pulled in by doubletake, and vah264enc is the default
 # encoder. Without it we silently fall back to software x264.
