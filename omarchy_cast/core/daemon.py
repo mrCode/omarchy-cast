@@ -213,5 +213,30 @@ class Daemon:
 
 
 def main() -> None:
-    """Entry point wired up fully in Task 12."""
-    raise SystemExit("omarchy-castd is not wired up until Task 12")
+    import argparse
+
+    from omarchy_cast.backends.airplay import AirPlayBackend
+    from omarchy_cast.backends.cast import CastBackend
+    from omarchy_cast.core.config import load_config
+    from omarchy_cast.core.discovery import Discovery
+
+    parser = argparse.ArgumentParser(prog="omarchy-castd")
+    parser.add_argument("--idle-timeout", type=float, default=30.0)
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    config = load_config()
+    daemon = Daemon(Discovery(), {}, idle_timeout=args.idle_timeout)
+    daemon.backends["airplay"] = AirPlayBackend(daemon.on_state, config)
+    daemon.backends["cast"] = CastBackend(daemon.on_state, config)
+
+    asyncio.run(daemon.serve())
+
+
+if __name__ == "__main__":
+    main()
