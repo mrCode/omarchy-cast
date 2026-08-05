@@ -5,7 +5,12 @@ import subprocess
 import sys
 
 from omarchy_cast.cli.client import DaemonUnavailable, request
-from omarchy_cast.cli.menu import MANUAL_ENTRY, format_entries, parse_selection
+from omarchy_cast.cli.menu import (
+    MANUAL_ENTRY,
+    STOP_ENTRY,
+    format_entries,
+    parse_selection,
+)
 from omarchy_cast.cli.waybar import render
 
 
@@ -82,8 +87,22 @@ def _run_menu() -> int:
         return _fail(response.get("error", "unknown error"))
 
     devices = (response.get("data") or {}).get("devices", [])
-    selection = _walker(format_entries(devices), "Cast to").strip()
+
+    status = asyncio.run(request("status"))
+    sessions = (status.get("data") or {}).get("sessions", [])
+
+    prompt = "Casting — pick to stop, or cast elsewhere" if sessions else "Cast to"
+    selection = _walker(format_entries(devices, sessions), prompt).strip()
     if not selection:
+        return 0
+
+    if selection.startswith(STOP_ENTRY):
+        result = asyncio.run(request("stop"))
+        if not result.get("ok"):
+            message = result.get("error", "unknown error")
+            _notify(message, urgent=True)
+            return _fail(message)
+        _notify("Stopped casting")
         return 0
 
     if selection == MANUAL_ENTRY:
@@ -109,6 +128,9 @@ def _run_menu() -> int:
     warning = (result.get("data") or {}).get("warning")
     if warning:
         _notify(warning)
+    else:
+        # The tooltip carries the same hint, but only on hover.
+        _notify("Casting started — right-click the waybar icon to stop")
     return 0
 
 

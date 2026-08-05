@@ -61,3 +61,25 @@ def test_all_states_produce_the_three_required_keys():
         ]
         out = render(sessions)
         assert set(out) == {"text", "tooltip", "class"}
+
+
+def test_every_state_tells_the_user_how_to_stop():
+    """A user reported 'waybar doesn't support stopping' when right-click did
+    work — it was invisible. The tooltip must say so.
+    """
+    from omarchy_cast.cli.waybar import HINT_ACTIVE
+
+    for state in ("connecting", "awaiting_pin", "streaming", "failed"):
+        out = render([{"name": "TV", "protocol": "cast", "state": state, "error": "e"}])
+        assert HINT_ACTIVE in out["tooltip"], state
+
+
+def test_idle_tooltip_invites_a_click():
+    out = render([])
+    assert "Not casting" in out["tooltip"]
+    assert "click" in out["tooltip"].lower()
+
+
+def test_tooltip_still_names_the_device():
+    out = render([{"name": "Living Room", "protocol": "airplay", "state": "streaming", "error": None}])
+    assert "Living Room" in out["tooltip"]

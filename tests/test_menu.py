@@ -59,3 +59,31 @@ def test_unicode_names_survive():
         {"id": "airplay:1", "name": "Zoë’s MacBook Air", "protocol": "airplay", "model": "Mac14,2"}
     ])
     assert "Zoë’s MacBook Air" in entries[0]
+
+
+def test_stop_entry_is_first_while_casting():
+    """Right-click on the waybar module is undiscoverable and did not work for
+    at least one user, so stopping must be reachable from the menu.
+    """
+    from omarchy_cast.cli.menu import STOP_ENTRY
+
+    entries = format_entries(
+        [{"id": "airplay:1", "name": "Living Room", "protocol": "airplay", "model": None}],
+        [{"id": "airplay:1", "name": "Living Room", "protocol": "airplay",
+          "state": "streaming", "error": None}],
+    )
+    assert entries[0].startswith(STOP_ENTRY)
+    assert "Living Room" in entries[0]
+
+
+def test_no_stop_entry_when_idle():
+    entries = format_entries(
+        [{"id": "airplay:1", "name": "Living Room", "protocol": "airplay", "model": None}], []
+    )
+    from omarchy_cast.cli.menu import STOP_ENTRY
+    assert not any(e.startswith(STOP_ENTRY) for e in entries)
+
+
+def test_stop_entry_is_not_parsed_as_a_device():
+    from omarchy_cast.cli.menu import STOP_ENTRY
+    assert parse_selection(f"{STOP_ENTRY} (Living Room)") is None

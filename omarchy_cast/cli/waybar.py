@@ -1,6 +1,11 @@
 ICON_IDLE = "󰄡"
 ICON_ACTIVE = "󰄠"
 
+# Right-click works but is invisible: a user reported "waybar doesn't support
+# stopping" when it did. The tooltip is where people actually look.
+HINT_IDLE = "Click to cast"
+HINT_ACTIVE = "Left-click: menu   Right-click: stop"
+
 CONNECTING_STATES = ("connecting", "awaiting_pin")
 
 
@@ -12,14 +17,18 @@ def render(sessions: list[dict]) -> dict:
     idle would make it impossible to find.
     """
     if not sessions:
-        return {"text": ICON_IDLE, "tooltip": "Not casting", "class": "idle"}
+        return {
+            "text": ICON_IDLE,
+            "tooltip": f"Not casting\n{HINT_IDLE}",
+            "class": "idle",
+        }
 
     failed = [s for s in sessions if s.get("state") == "failed"]
     if failed:
         reason = failed[0].get("error") or "unknown error"
         return {
             "text": ICON_ACTIVE,
-            "tooltip": f"Cast failed: {reason}",
+            "tooltip": f"Cast failed: {reason}\n{HINT_ACTIVE}",
             "class": "failed",
         }
 
@@ -30,8 +39,16 @@ def render(sessions: list[dict]) -> dict:
             tooltip = f"{session['name']}: enter the PIN shown on the receiver"
         else:
             tooltip = f"Connecting to {session['name']}..."
-        return {"text": ICON_ACTIVE, "tooltip": tooltip, "class": "connecting"}
+        return {
+            "text": ICON_ACTIVE,
+            "tooltip": f"{tooltip}\n{HINT_ACTIVE}",
+            "class": "connecting",
+        }
 
     names = ", ".join(s["name"] for s in sessions)
     text = ICON_ACTIVE if len(sessions) == 1 else f"{ICON_ACTIVE} {len(sessions)}"
-    return {"text": text, "tooltip": f"Casting to {names}", "class": "streaming"}
+    return {
+        "text": text,
+        "tooltip": f"Casting to {names}\n{HINT_ACTIVE}",
+        "class": "streaming",
+    }
