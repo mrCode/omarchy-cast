@@ -22,6 +22,54 @@
 - License: MIT, matching `omarchy-prayer`.
 - Tests: `pytest`. No test may require a real receiver, a network, a compositor, or a GPU.
 
+## Field Findings (live test, 2026-08-05)
+
+Verified on the target laptop against a real `AppleTV11,1` ("Living Room").
+These change requirements; they are not optional polish.
+
+**Confirmed working end to end:** install from AUR, daemon startup, control
+socket, JSON protocol, mDNS discovery (on a network that forwards multicast),
+direct-IP connect, SRP-6a PIN pairing, credential persistence to
+`~/.config/doubletake/credentials.json` (mode 0600), and `pair-verify` on
+reconnect.
+
+**Not yet verified:** portal capture, encode, and an actual video frame reaching
+a receiver. Everything in Tasks 10–12 remains unproven against hardware.
+
+1. **mDNS discovery cannot be the only way to reach a device.** On one test
+   network a device with AirPlay ports 7000/7100/5000 open was completely
+   invisible to a 20-second multicast scan — the AP does not forward multicast
+   between clients. Discovery-only UX is dead there. The CLI MUST accept a raw
+   address (`omarchy-cast start --address 192.168.1.231`), and the walker menu
+   MUST offer a manual-entry item. Treat this as a first-class path.
+
+2. **Password-protected receivers are unsupported by doubletake 0.4.0.** A
+   receiver with *Require Password* enabled (Settings → AirPlay and HomeKit)
+   challenges the mirroring SETUP with RFC 2069 HTTP Digest auth. doubletake
+   0.4.0 does not answer it and fails with:
+   `mirror setup failed: SETUP phase 1 (audio): HTTP 401 (body: )`
+   This is upstream issue #26, an open unmerged PR. Any shared or corporate
+   Apple TV is likely to be configured this way. Requirements:
+   - `AirPlayBackend` MUST detect `HTTP 401` in the failure and emit a specific
+     message naming *Require Password* and upstream issue #26 — not a generic
+     "setup failed". A user hitting this must not have to debug it.
+   - Add a `code` field to the `[airplay]` config section now, plumbed to
+     `DOUBLETAKE_CODE` in the daemon environment, so support lands as a config
+     change once #26 merges. Do not add a CLI flag for it yet.
+
+3. **`-no-audio` does not skip the audio SETUP phase.** The failure above
+   occurred with the daemon started as `-no-audio`. Do not assume that flag
+   removes the audio code path.
+
+4. **A firewall with default-DROP INPUT blocks mirroring**, exactly as the
+   design predicted. ufw was active on the test machine and rules scoped to the
+   receiver's subnet were required before the receiver could connect back. The
+   README instructions in Task 13 are load-bearing, not boilerplate.
+
+5. **Pairing emits a benign scary log line.** `transient pairing failed:
+   pair-setup M4 error: 2` appears immediately before the PIN prompt on every
+   first pairing. Never surface it as an error.
+
 ---
 
 ### Task 1: Project scaffolding, Device model, and config
@@ -1986,17 +2034,45 @@ git commit -m "feat: add waybar indicator and walker menu front-ends"
 **Interfaces:**
 - Consumes: `Backend`, `BackendError`, `StateCallback` (Task 5); `Config` (Task 1).
 - Produces:
-  - `AirPlayBackend(on_state, config, runner: CommandRunner | None = None)` with `protocol = "airplay"`
+  - `AirPlayBackend(on_state, config, runner: CommandRunner | None = None, poll_interval: float = 0.5)` with `protocol = "airplay"`
   - `CommandRunner = Callable[[list[str]], Awaitable[tuple[int, str, str]]]` returning `(returncode, stdout, stderr)`
-  - `PIN_MARKER = "pin"` — substring in doubletake output signalling PIN entry is needed
+  - `DT_STATES = ("idle", "discovering", "connecting", "streaming", "pin_required")`
+  - `STATE_MAP: dict[str, SessionState]` translating doubletake states to ours
+  - `parse_ctl(stdout: str) -> dict` — parses the JSON envelope, raising `BackendError` on malformed output
 
-Install the dependency first: `paru -S doubletake`
+**Verified contract (live test, 2026-08-05, against AppleTV14,1).** These facts were
+confirmed against a real device and the daemon source (`internal/daemon/daemon.go`);
+do not re-derive them:
+
+- `doubletake-ctl` emits a **JSON** envelope on stdout, never free text:
+  `{ok, state, device, device_ip, has_audio, audio_muted, needs_pin, error, devices[], streams[]}`
+- States are exactly `idle`, `discovering`, `connecting`, `streaming`, `pin_required`.
+  **There is no failed/error state** — failures come back as `ok: false` with an
+  `error` string, and the reported state falls back to `idle`.
+- **`connect` is asynchronous.** It returns immediately with `state: "connecting"`.
+  The backend MUST poll `status` until the state reaches `streaming` or
+  `pin_required`, or a timeout expires. A synchronous implementation will report
+  success before the receiver has accepted anything.
+- `pin` takes only the PIN, no device argument: `doubletake-ctl pin <PIN>`.
+- `disconnect` with no argument stops all streams; with an IP, only that one.
+- Pairing against a previously-unpaired device emits
+  `transient pairing failed: pair-setup M4 error: 2` to the daemon log before
+  entering `pin_required`. This is normal, not an error to surface.
+
+Install dependencies first. Note that **doubletake does not pull `gst-plugin-va`**,
+so `vah264enc` — the default encoder from Task 3 — is missing on a fresh install:
+
+```bash
+yay -S --needed doubletake gst-plugin-va
+```
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/test_airplay_backend.py`:
 
 ```python
+import json
+
 import pytest
 
 from omarchy_cast.backends.airplay import AirPlayBackend
@@ -2013,19 +2089,34 @@ def make_device():
     )
 
 
-class FakeRunner:
-    """Returns a queued result per invoked command, recording all calls."""
+def envelope(state="idle", ok=True, **extra):
+    """Build a doubletake-ctl JSON envelope exactly as the real binary emits it."""
+    body = {
+        "ok": ok,
+        "state": state,
+        "has_audio": False,
+        "audio_muted": False,
+        **extra,
+    }
+    return json.dumps(body)
 
-    def __init__(self, results=None):
+
+class FakeRunner:
+    """Fakes doubletake-ctl. `status_sequence` is consumed one entry per poll."""
+
+    def __init__(self, results=None, status_sequence=None):
         self.calls = []
         self.results = results or {}
+        self.status_sequence = list(status_sequence or [])
 
     async def __call__(self, argv):
         self.calls.append(argv)
+        if "status" in argv and self.status_sequence:
+            return (0, self.status_sequence.pop(0), "")
         for key, result in self.results.items():
             if key in argv:
                 return result
-        return (0, "", "")
+        return (0, envelope(), "")
 
 
 def make_backend(runner, **cfg):
@@ -2034,12 +2125,16 @@ def make_backend(runner, **cfg):
         lambda d, s, e: states.append((s, e)),
         Config(**cfg),
         runner=runner,
+        poll_interval=0.0,
     )
     return backend, states
 
 
 async def test_start_launches_daemon_then_connects():
-    runner = FakeRunner()
+    runner = FakeRunner(
+        results={"connect": (0, envelope("connecting"), "")},
+        status_sequence=[envelope("connecting"), envelope("streaming")],
+    )
     backend, states = make_backend(runner, airplay_port_range="60000-60010")
     await backend.start(make_device())
 
@@ -2050,8 +2145,28 @@ async def test_start_launches_daemon_then_connects():
     assert states[-1][0] is SessionState.STREAMING
 
 
+async def test_start_polls_until_streaming():
+    """connect returns 'connecting' immediately; success is only known by polling."""
+    runner = FakeRunner(
+        results={"connect": (0, envelope("connecting"), "")},
+        status_sequence=[
+            envelope("connecting"),
+            envelope("connecting"),
+            envelope("streaming"),
+        ],
+    )
+    backend, states = make_backend(runner)
+    await backend.start(make_device())
+    status_calls = [c for c in runner.calls if "status" in c]
+    assert len(status_calls) == 3
+    assert states[-1][0] is SessionState.STREAMING
+
+
 async def test_daemon_started_only_once():
-    runner = FakeRunner()
+    runner = FakeRunner(
+        results={"connect": (0, envelope("connecting"), "")},
+        status_sequence=[envelope("streaming"), envelope("streaming")],
+    )
     backend, _ = make_backend(runner)
     await backend.start(make_device())
     await backend.start(make_device())
@@ -2060,33 +2175,66 @@ async def test_daemon_started_only_once():
 
 
 async def test_pin_required_enters_awaiting_pin():
-    runner = FakeRunner({"connect": (0, "pairing required, enter pin shown on device", "")})
+    runner = FakeRunner(
+        results={"connect": (0, envelope("connecting"), "")},
+        status_sequence=[envelope("pin_required", needs_pin=True)],
+    )
     backend, states = make_backend(runner)
     await backend.start(make_device())
     assert states[-1][0] is SessionState.AWAITING_PIN
 
 
 async def test_submit_pin_reaches_streaming():
-    runner = FakeRunner({"connect": (0, "enter pin", "")})
+    runner = FakeRunner(
+        results={
+            "connect": (0, envelope("connecting"), ""),
+            "pin": (0, envelope("streaming"), ""),
+        },
+        status_sequence=[envelope("pin_required", needs_pin=True)],
+    )
     backend, states = make_backend(runner)
     device = make_device()
     await backend.start(device)
-    runner.results = {}
     await backend.submit_pin(device, "1234")
-    assert any("pin 1234" in " ".join(c) for c in runner.calls)
+    assert any(c[-2:] == ["pin", "1234"] for c in runner.calls)
     assert states[-1][0] is SessionState.STREAMING
 
 
-async def test_connect_failure_raises_actionable_error():
-    runner = FakeRunner({"connect": (1, "", "connection timed out")})
+async def test_connect_error_envelope_is_actionable():
+    """Failure arrives as ok:false with an error string, not a failed state."""
+    runner = FakeRunner(
+        results={"connect": (0, envelope("idle", ok=False, error="connection timed out"), "")}
+    )
     backend, states = make_backend(runner)
     with pytest.raises(BackendError, match="firewall"):
         await backend.start(make_device())
     assert states[-1][0] is SessionState.FAILED
 
 
+async def test_connect_timeout_mentions_firewall():
+    """Never reaching streaming is the documented silent-stall firewall case."""
+    runner = FakeRunner(
+        results={"connect": (0, envelope("connecting"), "")},
+        status_sequence=[envelope("connecting")] * 200,
+    )
+    backend, states = make_backend(runner)
+    with pytest.raises(BackendError, match="firewall"):
+        await backend.start(make_device())
+    assert states[-1][0] is SessionState.FAILED
+
+
+async def test_malformed_output_is_actionable():
+    runner = FakeRunner(results={"connect": (0, "not json at all", "")})
+    backend, _ = make_backend(runner)
+    with pytest.raises(BackendError, match="unexpected output"):
+        await backend.start(make_device())
+
+
 async def test_stop_disconnects_specific_device():
-    runner = FakeRunner()
+    runner = FakeRunner(
+        results={"connect": (0, envelope("connecting"), "")},
+        status_sequence=[envelope("streaming")],
+    )
     backend, states = make_backend(runner)
     device = make_device()
     await backend.start(device)
@@ -2115,6 +2263,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.backends
 
 ```python
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -2129,7 +2278,32 @@ CommandRunner = Callable[[list[str]], Awaitable[tuple[int, str, str]]]
 
 DAEMON_BIN = "doubletake"
 CTL_BIN = "doubletake-ctl"
-PIN_MARKER = "pin"
+
+# Verified against internal/daemon/daemon.go and a live AppleTV14,1.
+DT_STATES = ("idle", "discovering", "connecting", "streaming", "pin_required")
+
+STATE_MAP = {
+    "idle": SessionState.IDLE,
+    "discovering": SessionState.CONNECTING,
+    "connecting": SessionState.CONNECTING,
+    "streaming": SessionState.STREAMING,
+    "pin_required": SessionState.AWAITING_PIN,
+}
+
+CONNECT_TIMEOUT = 30.0
+
+
+def parse_ctl(stdout: str) -> dict:
+    """Parse a doubletake-ctl JSON envelope."""
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise BackendError(
+            f"unexpected output from {CTL_BIN}: {stdout.strip()[:120]!r}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise BackendError(f"unexpected output from {CTL_BIN}: not an object")
+    return payload
 
 
 async def subprocess_runner(argv: list[str]) -> tuple[int, str, str]:
@@ -2160,10 +2334,12 @@ class AirPlayBackend(Backend):
         on_state: StateCallback,
         config: Config,
         runner: CommandRunner | None = None,
+        poll_interval: float = 0.5,
     ) -> None:
         super().__init__(on_state)
         self._config = config
         self._run = runner or subprocess_runner
+        self._poll_interval = poll_interval
         self._daemon_started = False
 
     async def _exec(self, argv: list[str]) -> tuple[int, str, str]:
@@ -2185,33 +2361,62 @@ class AirPlayBackend(Backend):
             raise BackendError(f"could not start {DAEMON_BIN}: {stderr.strip() or code}")
         self._daemon_started = True
 
+    def _firewall_hint(self, device: Device, detail: str) -> str:
+        return (
+            f"could not reach {device.name}. The receiver connects back to this "
+            f"machine, so inbound TCP and UDP on ports "
+            f"{self._config.airplay_port_range} must be allowed — a default-DROP "
+            f"firewall makes this stall silently. ({detail})"
+        )
+
+    async def _ctl(self, args: list[str]) -> dict:
+        """Run doubletake-ctl and return its parsed envelope."""
+        _, stdout, stderr = await self._exec([CTL_BIN, *args])
+        payload = parse_ctl(stdout)
+        if not payload.get("ok", False):
+            raise BackendError(payload.get("error") or stderr.strip() or "command failed")
+        return payload
+
     async def start(self, device: Device) -> None:
         self._emit(device, SessionState.CONNECTING)
         await self._ensure_daemon()
 
-        code, stdout, stderr = await self._exec([CTL_BIN, "connect", device.address])
-
-        if code != 0:
-            message = (
-                f"could not reach {device.name}. The receiver must be able to connect "
-                f"back on ports {self._config.airplay_port_range}; allow inbound TCP "
-                f"and UDP on that range. ({stderr.strip() or stdout.strip() or code})"
-            )
+        # connect is asynchronous: it returns state="connecting" straight away.
+        try:
+            await self._ctl(["connect", device.address])
+        except BackendError as exc:
+            message = self._firewall_hint(device, str(exc))
             self._emit(device, SessionState.FAILED, message)
-            raise BackendError(message)
+            raise BackendError(message) from exc
 
-        if PIN_MARKER in stdout.lower():
-            self._emit(device, SessionState.AWAITING_PIN)
-            return
+        deadline = asyncio.get_running_loop().time() + CONNECT_TIMEOUT
+        while asyncio.get_running_loop().time() < deadline:
+            payload = await self._ctl(["status"])
+            state = STATE_MAP.get(payload.get("state", ""), SessionState.CONNECTING)
 
-        self._emit(device, SessionState.STREAMING)
+            if state is SessionState.AWAITING_PIN:
+                self._emit(device, SessionState.AWAITING_PIN)
+                return
+            if state is SessionState.STREAMING:
+                self._emit(device, SessionState.STREAMING)
+                return
+
+            await asyncio.sleep(self._poll_interval)
+
+        message = self._firewall_hint(
+            device, f"never reached streaming within {CONNECT_TIMEOUT:.0f}s"
+        )
+        self._emit(device, SessionState.FAILED, message)
+        raise BackendError(message)
 
     async def submit_pin(self, device: Device, pin: str) -> None:
-        code, _, stderr = await self._exec([CTL_BIN, "pin", pin])
-        if code != 0:
-            message = f"pairing failed: {stderr.strip() or code}"
+        # doubletake-ctl pin takes only the PIN; the daemon knows the pending device.
+        try:
+            await self._ctl(["pin", pin])
+        except BackendError as exc:
+            message = f"pairing failed: {exc}"
             self._emit(device, SessionState.FAILED, message)
-            raise BackendError(message)
+            raise BackendError(message) from exc
         self._emit(device, SessionState.STREAMING)
 
     async def stop(self, device: Device) -> None:
@@ -2227,7 +2432,7 @@ class AirPlayBackend(Backend):
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_airplay_backend.py -v`
-Expected: PASS (7 tests)
+Expected: PASS (10 tests)
 
 - [ ] **Step 5: Commit**
 
