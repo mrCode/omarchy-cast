@@ -152,11 +152,11 @@ encoder_ranking = ["vaapi", "x264", "nvenc"]
 [airplay]
 port_range = "60000-60010"
 bitrate = 0                               # kbps, 0 = auto
-code = ""                                 # see "Password-protected receivers"
+code = ""                                 # reserved; see doubletake#26
 
 [cast]
 bitrate = 8000                            # kbps
-http_port = 0                             # 0 = ephemeral
+http_port = 8010                          # fixed so it can be firewalled
 ```
 
 NVENC is ranked **last** on purpose. On laptops whose display runs off the

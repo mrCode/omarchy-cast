@@ -18,7 +18,7 @@ happened — including failures.
 
 | Device | Model | Status | Notes |
 |---|---|---|---|
-| — | — | ❓ Untested | No Chromecast was present on any network tested. The Cast backend is covered by unit tests against fakes but has never talked to real hardware. |
+| — | — | ❓ Untested | No Chromecast was present on any network tested. The Cast backend is covered by unit tests against fakes but has never talked to real hardware. See [testing-chromecast.md](testing-chromecast.md) for the checklist. |
 
 ## Capture and encode
 
