@@ -106,6 +106,9 @@ def _run_menu() -> int:
         message = result.get("error", "unknown error")
         _notify(message, urgent=True)
         return _fail(message)
+    warning = (result.get("data") or {}).get("warning")
+    if warning:
+        _notify(warning)
     return 0
 
 
@@ -181,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
         return _fail(response.get("error", "unknown error"))
 
     data = response.get("data") or {}
+    if data.get("warning"):
+        print(data["warning"], file=sys.stderr)
     if args.command == "list":
         _print_devices(data.get("devices", []))
     elif args.command == "status":

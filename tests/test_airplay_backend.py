@@ -75,6 +75,9 @@ class FakeProc:
 
 
 def make_backend(proc=None, ready_timeout=1.0, **cfg):
+    # Never touch the real display from tests. Switching is covered by
+    # test_display.py and by the integration tests below, both with fakes.
+    cfg.setdefault("airplay_auto_resolution", False)
     states = []
     spawned = {}
 
@@ -240,7 +243,8 @@ async def test_missing_binary_is_actionable():
 
     states = []
     backend = AirPlayBackend(
-        lambda d, s, e: states.append((s, e)), Config(), spawner=spawner
+        lambda d, s, e: states.append((s, e)),
+        Config(airplay_auto_resolution=False), spawner=spawner,
     )
     with pytest.raises(BackendError, match="doubletake"):
         await backend.start(make_device())
@@ -278,8 +282,9 @@ async def test_second_start_replaces_the_first_child():
         return procs.pop(0)
 
     backend = AirPlayBackend(
-        lambda d, s, e: states.append((s, e)), Config(), spawner=spawner,
-        ready_timeout=1.0,
+        lambda d, s, e: states.append((s, e)),
+        Config(airplay_auto_resolution=False),
+        spawner=spawner, ready_timeout=1.0,
     )
     device = make_device()
     first = procs[0]
@@ -403,3 +408,55 @@ def test_shim_is_regenerated_idempotently(tmp_path, monkeypatch):
     backend, _, _ = make_backend()
     first = backend.shim_dir()
     assert backend.shim_dir() == first
+
+
+# -- display switching integration -------------------------------------
+
+
+async def test_start_switches_the_display_and_stop_restores_it(monkeypatch):
+    """The receiver rejects a stream whose SPS does not match 1920x1080."""
+    from omarchy_cast.core import display as display_mod
+
+    calls = []
+    monkeypatch.setattr(display_mod, "apply_stream_mode", lambda *a, **k: calls.append("apply"))
+    monkeypatch.setattr(display_mod, "restore_mode", lambda *a, **k: calls.append("restore") or True)
+
+    proc = FakeProc([READY + b"\n"])
+    backend, _, _ = make_backend(proc, airplay_auto_resolution=True)
+    device = make_device()
+    await backend.start(device)
+    # start() clears any mode left over from a crash first, so a restore may
+    # precede the apply; what matters is that apply is the last thing done.
+    assert calls[-1] == "apply"
+    await backend.stop(device)
+    assert calls[-1] == "restore"
+
+
+async def test_display_is_restored_when_start_fails(monkeypatch):
+    """A failed start must not strand the user at 1080p."""
+    from omarchy_cast.core import display as display_mod
+
+    calls = []
+    monkeypatch.setattr(display_mod, "apply_stream_mode", lambda *a, **k: calls.append("apply"))
+    monkeypatch.setattr(display_mod, "restore_mode", lambda *a, **k: calls.append("restore") or True)
+
+    proc = FakeProc([b"mirror setup failed\n"], exit_on_eof=True)
+    backend, _, _ = make_backend(proc, airplay_auto_resolution=True)
+    with pytest.raises(BackendError):
+        await backend.start(make_device())
+    assert "restore" in calls
+
+
+async def test_display_untouched_when_disabled(monkeypatch):
+    from omarchy_cast.core import display as display_mod
+
+    calls = []
+    monkeypatch.setattr(display_mod, "apply_stream_mode", lambda *a, **k: calls.append("apply"))
+    monkeypatch.setattr(display_mod, "restore_mode", lambda *a, **k: calls.append("restore") or True)
+
+    proc = FakeProc([READY + b"\n"])
+    backend, _, _ = make_backend(proc, airplay_auto_resolution=False)
+    device = make_device()
+    await backend.start(device)
+    await backend.stop(device)
+    assert calls == []

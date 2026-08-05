@@ -26,6 +26,7 @@ from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
+from omarchy_cast.core import display
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import SessionState
@@ -210,6 +211,11 @@ class AirPlayBackend(Backend):
         await self._teardown(device.id)
         self._emit(device, SessionState.CONNECTING)
 
+        # Must happen before doubletake captures: the receiver rejects a stream
+        # whose SPS does not match the negotiated 1920x1080.
+        if self._config.airplay_auto_resolution:
+            display.apply_stream_mode()
+
         try:
             proc = await self._spawn(self.build_argv(device), self.daemon_env())
         except FileNotFoundError as exc:
@@ -305,6 +311,7 @@ class AirPlayBackend(Backend):
             # _await_ready owns the outcome.
             if session.streaming and not session.stopping:
                 self._sessions.pop(session.device.id, None)
+                self._restore_display()
                 self._emit(
                     session.device,
                     SessionState.FAILED,
@@ -316,9 +323,14 @@ class AirPlayBackend(Backend):
         await self._teardown(session.device.id)
         self._emit(session.device, SessionState.FAILED, message)
 
+    def _restore_display(self) -> None:
+        if self._config.airplay_auto_resolution and not self._sessions:
+            display.restore_mode()
+
     async def _teardown(self, device_id: str) -> None:
         session = self._sessions.pop(device_id, None)
         if session is None:
+            self._restore_display()
             return
         session.stopping = True
         session.proc.terminate()
@@ -328,3 +340,4 @@ class AirPlayBackend(Backend):
                 await session.pump
             except (asyncio.CancelledError, Exception):
                 pass
+        self._restore_display()

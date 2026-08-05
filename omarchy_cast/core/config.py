@@ -27,6 +27,10 @@ class Config:
     # refuses it, producing a silent black screen. Hiding the element makes
     # doubletake fall back to videoconvert, which works. Costs some CPU.
     airplay_hide_vapostproc: bool = True
+    # doubletake negotiates 1920x1080 and its fallback capture path has no
+    # scaler, so a higher-resolution display makes the receiver drop the
+    # connection. Switch the display while casting and put it back after.
+    airplay_auto_resolution: bool = True
     # Fixed, not ephemeral: the receiver connects INTO this port to fetch the
     # stream, so a random port in the ephemeral range cannot be allowed
     # through a firewall ahead of time. Set to 0 only if you have no
@@ -64,6 +68,8 @@ def load_config(path: Path | None = None) -> Config:
         cfg.airplay_code = str(airplay["code"])
     if "hide_vapostproc" in airplay:
         cfg.airplay_hide_vapostproc = bool(airplay["hide_vapostproc"])
+    if "auto_resolution" in airplay:
+        cfg.airplay_auto_resolution = bool(airplay["auto_resolution"])
 
     cast = data.get("cast", {})
     if "http_port" in cast:

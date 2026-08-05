@@ -1,28 +1,36 @@
 # omarchy-cast
 
-Mirror your Omarchy desktop to an Apple TV or a Chromecast, from a walker menu
-with a waybar indicator.
+Mirror your Omarchy desktop to an Apple TV, from a walker menu with a waybar
+indicator.
 
 Built for Hyprland/Wayland. Screen capture goes through xdg-desktop-portal and
 PipeWire, encoded on the GPU.
 
-## Latency — read this before installing
+**Status: v0.1.** AirPlay works and is verified on real hardware. Chromecast
+support is written but **has never been tested against a real device** — see
+[Chromecast](#chromecast) before relying on it.
 
-The two protocols are not equivalent, and the difference is large:
+## What works
 
-| Target | Latency | Good for |
+| Target | Status | Latency |
 |---|---|---|
-| **AirPlay** (Apple TV) | ~100–300 ms | Anything, including a usable second screen |
-| **Chromecast** | **1–3 seconds** | Video, slides, presentations |
+| **AirPlay** (Apple TV) | Verified on an `AppleTV11,1` at a sustained 31 fps | ~100–300 ms |
+| **Chromecast** | **Untested against hardware.** Unit-tested against fakes only | ~1–3 s by design |
 
-Chromecast casting goes through the Default Media Receiver, which buffers a
-media stream. **It is not usable as a second display** and it is not suitable
-for anything interactive — you will see your cursor move a second or more after
-you move it. This is a property of the protocol path, not a bug to be fixed.
+### Chromecast
 
-Real low-latency Chromecast mirroring needs the Chrome Mirroring receiver app,
-which requires AES-CTR-128 that GStreamer's SRTP elements do not implement. See
-`docs/superpowers/specs/` for the full reasoning.
+The code is here and it may work, but no Chromecast has ever been on a network
+where this was tested. Starting a Cast session prints a warning saying so. If
+you try it, please [open an issue](https://github.com/mrCode/omarchy-cast/issues)
+with the result — a confirmed failure is as useful as a success.
+
+Even once it works, Cast goes through the Default Media Receiver, which buffers
+a media stream. **It will not be usable as a second display** — expect your
+cursor to lag a second or more behind. That is the protocol path, not a bug.
+
+Real low-latency Cast mirroring needs the Chrome Mirroring receiver app, which
+requires AES-CTR-128 that GStreamer's SRTP elements do not implement. See
+`docs/superpowers/specs/` for the reasoning.
 
 ## Install
 
@@ -167,6 +175,7 @@ port_range = "60000-60010"
 bitrate = 0                               # kbps, 0 = auto
 code = ""                                 # reserved; see doubletake#26
 hide_vapostproc = true                    # required on Hyprland; see below
+auto_resolution = true                    # switch to 1080p while casting
 
 [cast]
 bitrate = 8000                            # kbps
@@ -192,26 +201,17 @@ This is **not** a tvOS authentication problem. Pairing with an onscreen code,
 credential persistence and `pair-verify` all work; an Apple TV with only an
 onscreen code and no AirPlay password mirrors fine.
 
-**AirPlay requires the display resolution to match what doubletake negotiates.**
-doubletake negotiates the AirPlay stream at 1920x1080, and its software capture
-path has no scaler — so on a higher-resolution display it sends full-resolution
-video into a 1080p stream and the receiver drops the connection immediately
-(`broken pipe` right after the codec frame).
+**AirPlay switches your display to 1920x1080 while casting.** doubletake
+negotiates the stream at 1080p and its capture path has no scaler, so a
+higher-resolution display makes the receiver drop the connection. omarchy-cast
+therefore switches the focused monitor when a cast starts and restores it when
+the cast stops, fails, or the daemon exits — including after a crash, since the
+previous mode is written to disk before switching.
 
-Until that is fixed upstream, set the output to 1920x1080 while casting:
-
-```bash
-hyprctl keyword monitor eDP-2,1920x1080@60,0x0,1
-```
-
-and restore it afterwards, e.g.:
-
-```bash
-hyprctl keyword monitor eDP-2,2560x1600@240,0x0,1.6
-```
-
-Confirmed on an `AppleTV11,1`: at 2560x1600 the receiver hung up on the codec
-frame; at 1920x1080 the same setup mirrored at a sustained 31 fps.
+Disable with `auto_resolution = false` under `[airplay]` if you would rather
+manage it yourself. Tracked upstream as
+[doubletake#28](https://github.com/omarroth/doubletake/issues/28); once that
+lands this can go away.
 
 **Casting to both protocols at once costs two encodes.** AirPlay capture is
 owned by doubletake and cannot be shared, so a simultaneous AirPlay + Chromecast

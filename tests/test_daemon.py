@@ -159,3 +159,18 @@ async def test_add_device_requires_address():
     resp = await daemon.handle({"cmd": "add", "protocol": "cast"})
     assert resp["ok"] is False
     assert "address" in resp["error"]
+
+
+async def test_starting_a_cast_session_warns_it_is_untested():
+    """Cast has never run against real hardware; say so at the point of use."""
+    daemon = make_daemon()
+    resp = await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+    assert resp["ok"] is True
+    assert "UNTESTED" in resp["data"]["warning"]
+
+
+async def test_airplay_start_carries_no_warning():
+    daemon = make_daemon(devices=[make_device("airplay", "9")])
+    daemon.backends["airplay"] = StubBackend(daemon.on_state)
+    resp = await daemon.handle({"cmd": "start", "device_id": "airplay:9"})
+    assert "warning" not in resp["data"]

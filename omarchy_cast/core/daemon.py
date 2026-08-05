@@ -22,6 +22,15 @@ log = logging.getLogger(__name__)
 
 DEFAULT_PORTS = {"airplay": 7000, "cast": 8009}
 
+# The Cast backend has never been exercised against real hardware -- it is
+# covered only by unit tests against fakes. Say so at the point of use rather
+# than only in the README, so nobody debugs it thinking it is known-good.
+CAST_UNTESTED = (
+    "Chromecast support is UNTESTED against real hardware and may not work. "
+    "If you try it, please report the result: "
+    "https://github.com/mrCode/omarchy-cast/issues"
+)
+
 
 def desktop_notify(message: str) -> None:
     """Surface a failure via mako. Best effort; never raises."""
@@ -161,7 +170,11 @@ class Daemon:
 
         await backend.start(device)
         session = self.sessions.get(device.id)
-        return ok({"state": str(session.state) if session else "idle"})
+        data = {"state": str(session.state) if session else "idle"}
+        if device.protocol == "cast":
+            data["warning"] = CAST_UNTESTED
+            log.warning(CAST_UNTESTED)
+        return ok(data)
 
     async def _cmd_stop(self, request: dict) -> dict:
         device_id = request.get("device_id")
@@ -260,6 +273,11 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    # A previous run may have died mid-cast with the display still switched.
+    from omarchy_cast.core import display
+    if display.restore_mode():
+        log.info("restored a display mode left over from a previous session")
 
     config = load_config()
     daemon = Daemon(Discovery(), {}, idle_timeout=args.idle_timeout)
