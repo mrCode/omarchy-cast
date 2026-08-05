@@ -1,6 +1,9 @@
-# Draft issue for omarroth/doubletake
+# Upstream issue: doubletake software fallback has no scaler
 
-Not filed. Review, edit, and submit if you want it.
+**Filed:** https://github.com/omarroth/doubletake/issues/28 (2026-08-05)
+
+Kept here as the record. Until this lands, omarchy-cast documents setting the
+display to 1920x1080 while casting over AirPlay.
 
 ---
 

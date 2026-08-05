@@ -82,7 +82,8 @@ it looks absent, which omarchy-cast arranges with a `gst-inspect-1.0` PATH shim
 **The software fallback has no scaler.** doubletake negotiates 1920×1080 but the
 fallback path emits the display's native resolution, so the SPS says 2560×1600
 and the receiver closes the socket on the codec frame with `broken pipe`.
-Matching the display mode to 1920×1080 fixes it. Needs a `videoscale` upstream.
+Matching the display mode to 1920×1080 fixes it. Reported upstream as
+[doubletake#28](https://github.com/omarroth/doubletake/issues/28).
 
 ### A third trap in the same area
 
