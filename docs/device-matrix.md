@@ -10,7 +10,7 @@ happened — including failures.
 
 | Device | Model | Status | Notes |
 |---|---|---|---|
-| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ✅ Works (direct mode) | Full mirror confirmed: `/info`, `pair-verify`, FairPlay SAP, SETUP phases 1+2, `RECORD` 200, event + data channels, NTP sync, clean TEARDOWN. Captured 1920×1080@30 via NVENC at 4147 kbps for ~56 s. Requires a direct `doubletake -target` run — **daemon mode fails**, see below. Device has an onscreen code and no AirPlay password. |
+| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ✅ Works | Confirmed end to end through omarchy-cast: connecting → streaming in 6.4 s, held, clean stop. Captured 1920×1080@30 at 4147 kbps using **VAAPI** (`vah264enc`) after `-hwaccel vaapi` overrode doubletake's NVENC auto-pick. Device has an onscreen code and no AirPlay password; pairing persists. |
 | Apple TV 4K (2022, 3rd gen) | `AppleTV14,1` | ❓ Untested | Discovered and reachable during testing; not connected to. Listed as working upstream. |
 | LG webOS TV | `KWS85U02` | ❓ Untested | Advertises `_airplay._tcp`. Third-party AirPlay receivers are the flakier path. |
 
@@ -56,6 +56,17 @@ Measured on the same device, same flags, minutes apart:
 With a default-DROP firewall only the second works. This is the real cause of
 every AirPlay failure recorded in this project. Two earlier explanations —
 *Require Password*, then *Require Device Verification* — were both wrong.
+
+**Resolved:** the AirPlay backend now runs `doubletake -target` directly, one
+child per session, so `-port-range` is honoured and AirPlay works.
+
+### A second trap in the same area
+
+doubletake logs `mirror session ready` about 4 s *before* `screen capture
+started`. Only the latter means pixels are flowing. Treating the former as
+readiness reported STREAMING for a stream that did not exist yet and would have
+masked a capture failure as success. Measured on this device: session ready at
++1.3 s, capture started at +6.4 s.
 
 ## Networks
 

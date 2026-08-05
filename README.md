@@ -154,23 +154,13 @@ frame, which costs more latency than the faster encoder saves. Override
 
 ## Known limitations
 
-**AirPlay fails behind a firewall, and `port_range` cannot currently fix it.**
+**Do not run doubletake in daemon mode.** Its `daemon.Config` has no port
+fields, so `-port-range` is silently dropped and the receiver's reverse
+handshake lands on random ephemeral ports that a firewall discards. omarchy-cast
+therefore runs `doubletake -target` directly, one child process per session,
+where the flag is honoured.
 
-doubletake 0.4.0 ignores `-port-range` when running as a daemon — its
-`daemon.Config` has no port fields, so the flag is parsed and then dropped. The
-receiver's reverse handshake therefore lands on random ephemeral ports rather
-than the configured range. With a default-DROP firewall those get discarded and
-SETUP stalls or returns `HTTP 401`.
-
-Confirmed on an `AppleTV11,1`: daemon mode used UDP `36760-36762` / TCP `45771`
-despite `-port-range 60000-60010`, while a direct `doubletake -target` run on
-the same device honoured the range and mirrored successfully.
-
-Until this is fixed upstream, either:
-
-- allow inbound TCP+UDP from the receiver on the ephemeral range (broad, so
-  scope it to the receiver's address), or
-- run `doubletake -target <ip>` directly, where `-port-range` works.
+If you drive doubletake yourself, use `-target`, not `-daemonize`.
 
 This is **not** a tvOS authentication problem. Pairing with an onscreen code,
 credential persistence and `pair-verify` all work; an Apple TV with only an

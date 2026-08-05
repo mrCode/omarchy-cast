@@ -1,5 +1,24 @@
+"""AirPlay mirroring by supervising a direct `doubletake -target` child.
+
+Why not daemon mode
+-------------------
+doubletake 0.4.0's `daemon.Config` (internal/daemon/daemon.go) carries no
+PortMin/PortMax. `-port-range` is parsed in cmd/doubletake/main.go and threaded
+into StreamConfig on the direct path only, so under `-daemonize` it is silently
+dropped and the receiver's reverse handshake lands on random ephemeral ports.
+With a default-DROP firewall those are discarded and SETUP stalls or returns
+HTTP 401.
+
+Measured on the same AppleTV11,1 with identical flags:
+
+    -daemonize      UDP 36760-36762, TCP 45771   -> stalls, fails
+    -target         UDP 60000-60002, TCP 60003   -> mirrors successfully
+
+So each session is its own child process. That also makes crash detection a
+plain process exit rather than a polling loop.
+"""
+
 import asyncio
-import json
 import logging
 import os
 from collections.abc import Awaitable, Callable
@@ -11,86 +30,137 @@ from omarchy_cast.core.session import SessionState
 
 log = logging.getLogger(__name__)
 
-CommandRunner = Callable[[list[str]], Awaitable[tuple[int, str, str]]]
+BIN = "doubletake"
 
-DAEMON_BIN = "doubletake"
-CTL_BIN = "doubletake-ctl"
+# doubletake prints this with fmt.Print -- no trailing newline -- so output must
+# be scanned as chunks, not lines.
+PIN_PROMPT = "Enter the PIN shown on Apple TV"
 
-# Verified against internal/daemon/daemon.go and a live AppleTV11,1.
-DT_STATES = ("idle", "discovering", "connecting", "streaming", "pin_required")
+# Only this marker means pixels are actually flowing. "mirror session ready"
+# is emitted ~4s earlier, as soon as the RTSP session is set up and before the
+# capture pipeline starts (and before the portal has necessarily been
+# answered), so treating it as ready reports STREAMING for a stream that does
+# not yet exist -- and would mask a capture failure as success.
+READY_MARKERS = ("screen capture started",)
 
-STATE_MAP = {
-    "idle": SessionState.IDLE,
-    "discovering": SessionState.CONNECTING,
-    "connecting": SessionState.CONNECTING,
-    "streaming": SessionState.STREAMING,
-    "pin_required": SessionState.AWAITING_PIN,
-}
+# Progress markers: useful for diagnostics, never taken as ready.
+PROGRESS_MARKERS = ("mirror session ready", "FairPlay setup complete")
 
-CONNECT_TIMEOUT = 30.0
-SUPERVISE_INTERVAL = 3.0
+# Our encoder vocabulary -> doubletake's -hwaccel vocabulary.
+HWACCEL_MAP = {"auto": "auto", "vaapi": "vaapi", "nvenc": "nvenc", "x264": "none"}
 
+READY_TIMEOUT = 30.0
+MAX_BUFFER = 16384
 
-def parse_ctl(stdout: str) -> dict:
-    """Parse a doubletake-ctl JSON envelope."""
-    try:
-        payload = json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        raise BackendError(
-            f"unexpected output from {CTL_BIN}: {stdout.strip()[:120]!r}"
-        ) from exc
-    if not isinstance(payload, dict):
-        raise BackendError(f"unexpected output from {CTL_BIN}: not an object")
-    return payload
+Spawner = Callable[[list[str], dict], Awaitable["ProcessLike"]]
 
 
-async def subprocess_runner(argv: list[str]) -> tuple[int, str, str]:
-    process = await asyncio.create_subprocess_exec(
+class ProcessLike:
+    """Minimal surface the backend needs from a child process."""
+
+    async def read(self, n: int = 4096) -> bytes: ...
+    async def write(self, data: bytes) -> None: ...
+    def terminate(self) -> None: ...
+    async def wait(self) -> int: ...
+
+
+class _Process:
+    """Wraps an asyncio subprocess with stderr folded into stdout."""
+
+    def __init__(self, proc) -> None:
+        self._proc = proc
+
+    @property
+    def returncode(self):
+        return self._proc.returncode
+
+    async def read(self, n: int = 4096) -> bytes:
+        return await self._proc.stdout.read(n)
+
+    async def write(self, data: bytes) -> None:
+        self._proc.stdin.write(data)
+        await self._proc.stdin.drain()
+
+    def terminate(self) -> None:
+        if self._proc.returncode is None:
+            self._proc.terminate()
+
+    async def wait(self) -> int:
+        return await self._proc.wait()
+
+
+async def subprocess_spawner(argv: list[str], env: dict) -> _Process:
+    proc = await asyncio.create_subprocess_exec(
         *argv,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
     )
-    stdout, stderr = await process.communicate()
-    return (
-        process.returncode or 0,
-        stdout.decode("utf-8", "replace"),
-        stderr.decode("utf-8", "replace"),
-    )
+    return _Process(proc)
+
+
+class _Session:
+    def __init__(self, device: Device, proc) -> None:
+        self.device = device
+        self.proc = proc
+        self.output = ""
+        self.ready = asyncio.Event()
+        self.needs_pin = asyncio.Event()
+        self.exited = asyncio.Event()
+        self.stopping = False
+        # Set once STREAMING has actually been reported. The pump only treats a
+        # process exit as a crash after that; before it, _await_ready owns the
+        # outcome, so a startup failure cannot be overwritten by a late
+        # STREAMING emit.
+        self.streaming = False
+        self.pump: asyncio.Task | None = None
+
+    def absorb(self, chunk: bytes) -> None:
+        self.output += chunk.decode("utf-8", "replace")
+        if len(self.output) > MAX_BUFFER:
+            self.output = self.output[-MAX_BUFFER:]
+        if not self.ready.is_set() and any(m in self.output for m in READY_MARKERS):
+            self.ready.set()
+        if not self.needs_pin.is_set() and PIN_PROMPT in self.output:
+            self.needs_pin.set()
+
+    def tail(self, limit: int = 300) -> str:
+        return " ".join(self.output.split())[-limit:]
 
 
 class AirPlayBackend(Backend):
-    """Delegates AirPlay mirroring to the external doubletake daemon.
-
-    doubletake owns its own screen capture; this backend only supervises the
-    process and drives it through doubletake-ctl.
-    """
-
     protocol = "airplay"
 
     def __init__(
         self,
         on_state: StateCallback,
         config: Config,
-        runner: CommandRunner | None = None,
-        poll_interval: float = 0.5,
-        connect_timeout: float = CONNECT_TIMEOUT,
-        supervise_interval: float = SUPERVISE_INTERVAL,
+        spawner: Spawner | None = None,
+        ready_timeout: float = READY_TIMEOUT,
     ) -> None:
         super().__init__(on_state)
         self._config = config
-        self._run = runner or subprocess_runner
-        self._poll_interval = poll_interval
-        self._connect_timeout = connect_timeout
-        self._supervise_interval = supervise_interval
-        self._daemon_started = False
-        self._supervisors: dict[str, asyncio.Task] = {}
+        self._spawn = spawner or subprocess_spawner
+        self._ready_timeout = ready_timeout
+        self._sessions: dict[str, _Session] = {}
+
+    # -- process construction --------------------------------------------
+
+    def build_argv(self, device: Device) -> list[str]:
+        argv = [
+            BIN,
+            "-target", device.address,
+            "-port-range", self._config.airplay_port_range,
+            "-fps", str(self._config.fps),
+            "-hwaccel", HWACCEL_MAP.get(self._config.encoder, "auto"),
+        ]
+        if self._config.airplay_bitrate:
+            argv += ["-bitrate", str(self._config.airplay_bitrate)]
+        return argv
 
     def daemon_env(self) -> dict[str, str]:
-        """Environment for the doubletake daemon.
-
-        DOUBLETAKE_CODE is plumbed ahead of upstream #26 landing, so password
-        support becomes a config change rather than a code change.
-        """
+        """DOUBLETAKE_CODE is plumbed ahead of upstream #26 landing."""
         env = dict(os.environ)
         if self._config.airplay_code:
             env["DOUBLETAKE_CODE"] = self._config.airplay_code
@@ -98,161 +168,127 @@ class AirPlayBackend(Backend):
             env.pop("DOUBLETAKE_CODE", None)
         return env
 
-    async def _exec(self, argv: list[str]) -> tuple[int, str, str]:
-        try:
-            return await self._run(argv)
-        except FileNotFoundError as exc:
-            raise BackendError(
-                f"{DAEMON_BIN} is not installed; install it with: yay -S doubletake"
-            ) from exc
-
-    async def _ensure_daemon(self) -> None:
-        if self._daemon_started:
-            return
-        argv = [DAEMON_BIN, "-daemonize", "-port-range", self._config.airplay_port_range]
-        if self._config.airplay_bitrate:
-            argv += ["-bitrate", str(self._config.airplay_bitrate)]
-        code, _, stderr = await self._exec(argv)
-        if code != 0 and "already running" not in stderr.lower():
-            raise BackendError(f"could not start {DAEMON_BIN}: {stderr.strip() or code}")
-        self._daemon_started = True
-
-    def _explain(self, device: Device, detail: str) -> str:
-        # Root cause confirmed against doubletake 0.4.0 source and a live
-        # AppleTV11,1: daemon.Config carries no PortMin/PortMax, so -port-range
-        # is silently ignored in -daemonize mode and the receiver's reverse
-        # handshake lands on ephemeral ports a default-DROP firewall discards.
-        # SETUP then stalls (or returns 401) and mirroring never starts.
-        # The same device mirrors fine via a direct `doubletake -target` run,
-        # where the flag is honoured.
-        if "401" in detail or "timeout" in detail.lower():
-            return (
-                f"{device.name} never completed SETUP. The receiver connects back "
-                f"to this machine, and doubletake 0.4.0 ignores -port-range when "
-                f"running as a daemon (daemon.Config has no port fields), so it "
-                f"listens on random ephemeral ports instead of "
-                f"{self._config.airplay_port_range}. A default-DROP firewall then "
-                f"drops the receiver's connection. Either allow inbound TCP+UDP "
-                f"from {device.address} on the ephemeral range, or run "
-                f"'doubletake -target {device.address}' directly, where "
-                f"-port-range works. ({detail})"
-            )
-        return (
-            f"could not reach {device.name}. The receiver connects back to this "
-            f"machine, so inbound TCP and UDP on ports "
-            f"{self._config.airplay_port_range} must be allowed -- a default-DROP "
-            f"firewall makes this stall silently. ({detail})"
-        )
-
-    async def _ctl(self, args: list[str]) -> dict:
-        """Run doubletake-ctl and return its parsed envelope."""
-        _, stdout, stderr = await self._exec([CTL_BIN, *args])
-        payload = parse_ctl(stdout)
-        if not payload.get("ok", False):
-            raise BackendError(payload.get("error") or stderr.strip() or "command failed")
-        return payload
+    # -- lifecycle ---------------------------------------------------------
 
     async def start(self, device: Device) -> None:
+        await self._teardown(device.id)
         self._emit(device, SessionState.CONNECTING)
-        await self._ensure_daemon()
 
-        # connect is asynchronous: it returns state="connecting" straight away.
         try:
-            await self._ctl(["connect", device.address])
-        except BackendError as exc:
-            message = self._explain(device, str(exc))
+            proc = await self._spawn(self.build_argv(device), self.daemon_env())
+        except FileNotFoundError as exc:
+            message = f"{BIN} is not installed; install it with: yay -S doubletake"
             self._emit(device, SessionState.FAILED, message)
             raise BackendError(message) from exc
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._connect_timeout
-        while loop.time() < deadline:
-            payload = await self._ctl(["status"])
-            state = STATE_MAP.get(payload.get("state", ""), SessionState.CONNECTING)
+        session = _Session(device, proc)
+        self._sessions[device.id] = session
+        session.pump = asyncio.create_task(self._pump(session))
 
-            if state is SessionState.AWAITING_PIN:
-                self._emit(device, SessionState.AWAITING_PIN)
-                return
-            if state is SessionState.STREAMING:
-                self._emit(device, SessionState.STREAMING)
-                self._supervise(device)
-                return
+        await self._await_ready(session, initial=True)
 
-            await asyncio.sleep(self._poll_interval)
+    async def _await_ready(self, session: _Session, initial: bool) -> None:
+        device = session.device
+        waiters = [
+            asyncio.ensure_future(session.ready.wait()),
+            asyncio.ensure_future(session.exited.wait()),
+        ]
+        if initial:
+            waiters.append(asyncio.ensure_future(session.needs_pin.wait()))
 
-        message = self._explain(
-            device, f"never reached streaming within {self._connect_timeout:.0f}s"
+        try:
+            done, pending = await asyncio.wait(
+                waiters, timeout=self._ready_timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for w in waiters:
+                w.cancel()
+
+        # Exit is checked first: a child that reached the ready marker and then
+        # died has still failed, and reporting STREAMING would be a lie.
+        if session.exited.is_set():
+            message = (
+                f"{BIN} exited before mirroring started: {session.tail() or 'no output'}"
+            )
+            await self._fail(session, message)
+            raise BackendError(message)
+
+        if session.ready.is_set():
+            session.streaming = True
+            self._emit(device, SessionState.STREAMING)
+            return
+
+        if initial and session.needs_pin.is_set():
+            self._emit(device, SessionState.AWAITING_PIN)
+            return
+
+        message = (
+            f"{device.name} never started mirroring within "
+            f"{self._ready_timeout:.0f}s. The receiver connects back to this "
+            f"machine on {self._config.airplay_port_range}; a default-DROP "
+            f"firewall silently drops that and SETUP stalls. Allow inbound TCP "
+            f"and UDP on that range from {device.address}."
         )
-        self._emit(device, SessionState.FAILED, message)
+        await self._fail(session, message)
         raise BackendError(message)
 
     async def submit_pin(self, device: Device, pin: str) -> None:
-        # doubletake-ctl pin takes only the PIN; the daemon knows the device.
-        try:
-            await self._ctl(["pin", pin])
-        except BackendError as exc:
-            message = f"pairing failed: {exc}"
-            self._emit(device, SessionState.FAILED, message)
-            raise BackendError(message) from exc
-        self._emit(device, SessionState.STREAMING)
-
-    # -- supervision -----------------------------------------------------
-
-    def _supervise(self, device: Device) -> None:
-        """Watch a live stream so a doubletake crash does not go unnoticed.
-
-        Without this the session stays STREAMING forever after the process
-        dies: waybar keeps showing green and stop has nothing to stop.
-        """
-        self._cancel_supervisor(device.id)
-        self._supervisors[device.id] = asyncio.create_task(self._watch(device))
-
-    def _cancel_supervisor(self, device_id: str) -> None:
-        task = self._supervisors.pop(device_id, None)
-        if task is not None:
-            task.cancel()
-
-    async def _watch(self, device: Device) -> None:
-        try:
-            while True:
-                await asyncio.sleep(self._supervise_interval)
-                try:
-                    payload = await self._ctl(["status"])
-                except BackendError as exc:
-                    self._drop(device, str(exc))
-                    return
-
-                state = STATE_MAP.get(payload.get("state", ""))
-                # AWAITING_PIN can legitimately last minutes.
-                if state in (SessionState.STREAMING, SessionState.AWAITING_PIN):
-                    continue
-
-                self._drop(device, f"doubletake reported {payload.get('state')!r}")
-                return
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # never let this escape into the event loop
-            log.debug("supervisor error", exc_info=True)
-            self._drop(device, str(exc))
-
-    def _drop(self, device: Device, detail: str) -> None:
-        self._supervisors.pop(device.id, None)
-        self._emit(
-            device,
-            SessionState.FAILED,
-            f"mirroring to {device.name} stopped unexpectedly ({detail})",
-        )
-
-    # -- teardown --------------------------------------------------------
+        session = self._sessions.get(device.id)
+        if session is None:
+            raise BackendError(f"no pending session for {device.name}")
+        await session.proc.write(f"{pin}\n".encode())
+        await self._await_ready(session, initial=False)
 
     async def stop(self, device: Device) -> None:
-        self._cancel_supervisor(device.id)
         self._emit(device, SessionState.STOPPING)
-        await self._exec([CTL_BIN, "disconnect", device.address])
+        await self._teardown(device.id)
         self._emit(device, SessionState.IDLE)
 
     async def shutdown(self) -> None:
-        for device_id in list(self._supervisors):
-            self._cancel_supervisor(device_id)
-        if self._daemon_started:
-            await self._exec([CTL_BIN, "disconnect"])
+        for device_id in list(self._sessions):
+            await self._teardown(device_id)
+
+    # -- internals ---------------------------------------------------------
+
+    async def _pump(self, session: _Session) -> None:
+        """Read the child's merged output until it exits."""
+        try:
+            while True:
+                chunk = await session.proc.read()
+                if not chunk:
+                    break
+                session.absorb(chunk)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.debug("output pump failed", exc_info=True)
+        finally:
+            session.exited.set()
+            # Only a crash after STREAMING was reported; before that,
+            # _await_ready owns the outcome.
+            if session.streaming and not session.stopping:
+                self._sessions.pop(session.device.id, None)
+                self._emit(
+                    session.device,
+                    SessionState.FAILED,
+                    f"mirroring to {session.device.name} stopped unexpectedly "
+                    f"({session.tail(120) or 'process exited'})",
+                )
+
+    async def _fail(self, session: _Session, message: str) -> None:
+        await self._teardown(session.device.id)
+        self._emit(session.device, SessionState.FAILED, message)
+
+    async def _teardown(self, device_id: str) -> None:
+        session = self._sessions.pop(device_id, None)
+        if session is None:
+            return
+        session.stopping = True
+        session.proc.terminate()
+        if session.pump is not None:
+            session.pump.cancel()
+            try:
+                await session.pump
+            except (asyncio.CancelledError, Exception):
+                pass
