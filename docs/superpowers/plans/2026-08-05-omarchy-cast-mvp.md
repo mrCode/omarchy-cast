@@ -201,6 +201,9 @@ include = ["omarchy_cast*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Required: without this the package is only importable after an install,
+# because pytest puts the tests dir on sys.path, not the project root.
+pythonpath = ["."]
 ```
 
 - [ ] **Step 4: Write the minimal implementation**
@@ -304,7 +307,8 @@ def load_config(path: Path | None = None) -> Config:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/test_device.py tests/test_config.py -v`
-Expected: PASS (6 tests)
+Expected: PASS (13 tests — the listed ones plus coverage for the `[cast]` and
+`[airplay]` sections and the mutable-default guard)
 
 - [ ] **Step 6: Commit**
 
