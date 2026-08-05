@@ -2,7 +2,7 @@
 pkgname=omarchy-cast
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Desktop mirroring for Omarchy to AirPlay and Google Cast receivers"
+pkgdesc="Desktop mirroring for Omarchy/Hyprland to AirPlay receivers (experimental Google Cast support)"
 arch=('any')
 url="https://github.com/mrCode/omarchy-cast"
 license=('MIT')
