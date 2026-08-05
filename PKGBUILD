@@ -23,7 +23,7 @@ depends=(
   'pipewire'
 )
 optdepends=(
-  'doubletake: AirPlay mirroring support'
+  'doubletake-git: AirPlay mirroring support (the 0.4.0 release cannot capture on Hyprland)'
   'walker: device picker menu'
   'waybar: status indicator'
   'libnotify: desktop notifications on failure'

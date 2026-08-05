@@ -21,6 +21,12 @@ class Config:
     airplay_port_range: str = "60000-60010"
     airplay_bitrate: int = 0
     airplay_code: str = ""
+    # doubletake's capture pipeline uses vapostproc to import the portal's
+    # DMA-BUF. On Hyprland the buffer is padded (16 MiB for a 2560x1600
+    # RGBA frame vs a 15.6 MiB descriptor) and GStreamer's VA allocator
+    # refuses it, producing a silent black screen. Hiding the element makes
+    # doubletake fall back to videoconvert, which works. Costs some CPU.
+    airplay_hide_vapostproc: bool = True
     # Fixed, not ephemeral: the receiver connects INTO this port to fetch the
     # stream, so a random port in the ephemeral range cannot be allowed
     # through a firewall ahead of time. Set to 0 only if you have no
@@ -56,6 +62,8 @@ def load_config(path: Path | None = None) -> Config:
     if "code" in airplay:
         # Passed to doubletake as DOUBLETAKE_CODE once upstream #26 merges.
         cfg.airplay_code = str(airplay["code"])
+    if "hide_vapostproc" in airplay:
+        cfg.airplay_hide_vapostproc = bool(airplay["hide_vapostproc"])
 
     cast = data.get("cast", {})
     if "http_port" in cast:

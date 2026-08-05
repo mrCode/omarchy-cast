@@ -44,7 +44,15 @@ check_gst_element x264enc     "pacman -S gst-plugins-ugly"
 
 if ! command -v doubletake >/dev/null 2>&1; then
   warn "doubletake not found — AirPlay will be unavailable"
-  warn "  install it with: yay -S doubletake"
+  warn "  install it with: yay -S doubletake-git"
+# Exact-name match: doubletake-git 'provides' doubletake, so `pacman -Qq
+# doubletake` succeeds for either and would nag a correctly-configured user.
+elif pacman -Qq 2>/dev/null | grep -qx doubletake; then
+  # 0.4.0 hardcodes vapostproc with no fallback, which cannot import Hyprland's
+  # padded DMA-BUF. The result is a silent black screen on the receiver.
+  warn "you have the release 'doubletake' package; AirPlay needs 'doubletake-git'"
+  warn "  0.4.0 has no vapostproc fallback and mirrors a black screen on Hyprland"
+  warn "  fix: sudo pacman -Rdd doubletake && yay -S doubletake-git"
 fi
 
 # Deliberately not using pip. Arch ships python without pip and marks the

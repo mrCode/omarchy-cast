@@ -10,7 +10,7 @@ happened — including failures.
 
 | Device | Model | Status | Notes |
 |---|---|---|---|
-| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ✅ Works | Confirmed end to end through omarchy-cast: connecting → streaming in 6.4 s, held, clean stop. Captured 1920×1080@30 at 4147 kbps using **VAAPI** (`vah264enc`) after `-hwaccel vaapi` overrode doubletake's NVENC auto-pick. Device has an onscreen code and no AirPlay password; pairing persists. |
+| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ✅ Works, with conditions | Sustained mirror confirmed visually and by counters: 31 fps, 25 MB transferred. **Requires `doubletake-git`** (0.4.0 cannot capture here) **and the display set to 1920×1080** (see below). Device has an onscreen code and no AirPlay password. |
 | Apple TV 4K (2022, 3rd gen) | `AppleTV14,1` | ❓ Untested | Discovered and reachable during testing; not connected to. Listed as working upstream. |
 | LG webOS TV | `KWS85U02` | ❓ Untested | Advertises `_airplay._tcp`. Third-party AirPlay receivers are the flakier path. |
 
@@ -61,7 +61,30 @@ every AirPlay failure recorded in this project. Two earlier explanations —
 child per session, so `-port-range` is honoured and AirPlay works.
 Reported upstream as [doubletake#27](https://github.com/omarroth/doubletake/issues/27).
 
-### A second trap in the same area
+### Two more traps found the same evening
+
+**`vapostproc` cannot import Hyprland's DMA-BUF.** doubletake's capture pipeline
+uses it to import the portal buffer; GStreamer's VA allocator refuses it:
+
+```
+driver bug: fd size (16777216) is bigger than object descriptor size (16384000)
+```
+
+16,384,000 is 2560×1600×4 — the frame; 16,777,216 is the padded allocation. The
+pipeline produces zero bytes, `gst-launch --quiet` hides the error, and the
+receiver shows black. Isolated by A/B on the same portal node: our pipeline
+produced 235 chunks, the same pipeline with `vapostproc` inserted produced 0.
+
+0.4.0 hardcodes the element. `doubletake-git` falls back to `videoconvert` when
+it looks absent, which omarchy-cast arranges with a `gst-inspect-1.0` PATH shim
+(`airplay.hide_vapostproc`).
+
+**The software fallback has no scaler.** doubletake negotiates 1920×1080 but the
+fallback path emits the display's native resolution, so the SPS says 2560×1600
+and the receiver closes the socket on the codec frame with `broken pipe`.
+Matching the display mode to 1920×1080 fixes it. Needs a `videoscale` upstream.
+
+### A third trap in the same area
 
 doubletake logs `mirror session ready` about 4 s *before* `screen capture
 started`. Only the latter means pixels are flowing. Treating the former as

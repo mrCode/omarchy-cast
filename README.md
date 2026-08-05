@@ -35,11 +35,16 @@ into `~/.local/bin`. It deliberately does not use pip: Arch ships `python`
 without pip and marks the environment externally-managed (PEP 668), and every
 dependency is a system package already.
 
-AirPlay support additionally needs [doubletake](https://github.com/omarroth/doubletake):
+AirPlay support additionally needs [doubletake](https://github.com/omarroth/doubletake)
+— specifically the **git** package:
 
 ```bash
-yay -S doubletake
+yay -S doubletake-git
 ```
+
+The 0.4.0 release cannot capture on Hyprland: it hardcodes `vapostproc`, which
+fails to import the compositor's padded DMA-BUF and mirrors a black screen with
+no error. `doubletake-git` has a software fallback that omarchy-cast triggers.
 
 Uninstall with `./uninstall.sh`. An AUR `PKGBUILD` is included but not yet
 published.
@@ -161,6 +166,7 @@ encoder_ranking = ["vaapi", "x264", "nvenc"]
 port_range = "60000-60010"
 bitrate = 0                               # kbps, 0 = auto
 code = ""                                 # reserved; see doubletake#26
+hide_vapostproc = true                    # required on Hyprland; see below
 
 [cast]
 bitrate = 8000                            # kbps
@@ -185,6 +191,27 @@ If you drive doubletake yourself, use `-target`, not `-daemonize`.
 This is **not** a tvOS authentication problem. Pairing with an onscreen code,
 credential persistence and `pair-verify` all work; an Apple TV with only an
 onscreen code and no AirPlay password mirrors fine.
+
+**AirPlay requires the display resolution to match what doubletake negotiates.**
+doubletake negotiates the AirPlay stream at 1920x1080, and its software capture
+path has no scaler — so on a higher-resolution display it sends full-resolution
+video into a 1080p stream and the receiver drops the connection immediately
+(`broken pipe` right after the codec frame).
+
+Until that is fixed upstream, set the output to 1920x1080 while casting:
+
+```bash
+hyprctl keyword monitor eDP-2,1920x1080@60,0x0,1
+```
+
+and restore it afterwards, e.g.:
+
+```bash
+hyprctl keyword monitor eDP-2,2560x1600@240,0x0,1.6
+```
+
+Confirmed on an `AppleTV11,1`: at 2560x1600 the receiver hung up on the codec
+frame; at 1920x1080 the same setup mirrored at a sustained 31 fps.
 
 **Casting to both protocols at once costs two encodes.** AirPlay capture is
 owned by doubletake and cannot be shared, so a simultaneous AirPlay + Chromecast

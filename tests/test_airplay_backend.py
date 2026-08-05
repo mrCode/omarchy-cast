@@ -361,3 +361,45 @@ async def test_capture_started_after_session_ready_is_streaming():
     await backend.start(make_device())
     assert states[-1][0] is SessionState.STREAMING
     await backend.shutdown()
+
+
+# -- vapostproc shim ---------------------------------------------------
+
+
+def test_shim_hides_vapostproc_but_passes_everything_else(tmp_path, monkeypatch):
+    """doubletake probes with `gst-inspect-1.0 vapostproc` and uses the element
+    if present. On Hyprland it is present but cannot import the portal's padded
+    DMA-BUF, so the pipeline emits nothing and the receiver shows black with no
+    error. Reporting it absent forces the working videoconvert path.
+    """
+    import subprocess
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    backend, _, _ = make_backend()
+    shim = backend.shim_dir() / "gst-inspect-1.0"
+
+    assert shim.exists()
+    assert shim.stat().st_mode & 0o111, "shim must be executable"
+    assert subprocess.run([str(shim), "vapostproc"]).returncode != 0
+    # Anything else must pass through to the real binary.
+    assert "exec " in shim.read_text()
+
+
+def test_env_prepends_the_shim_when_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    backend, _, _ = make_backend(airplay_hide_vapostproc=True)
+    assert backend.daemon_env()["PATH"].startswith(str(backend.shim_dir()))
+
+
+def test_env_leaves_path_alone_when_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    backend, _, _ = make_backend(airplay_hide_vapostproc=False)
+    assert backend.daemon_env()["PATH"] == "/usr/bin"
+
+
+def test_shim_is_regenerated_idempotently(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    backend, _, _ = make_backend()
+    first = backend.shim_dir()
+    assert backend.shim_dir() == first
