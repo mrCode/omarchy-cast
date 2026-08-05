@@ -27,14 +27,22 @@ which requires AES-CTR-128 that GStreamer's SRTP elements do not implement. See
 ## Install
 
 ```bash
-yay -S omarchy-cast
+git clone https://github.com/mrCode/omarchy-cast && cd omarchy-cast && ./install.sh
 ```
+
+This copies the package to `~/.local/share/omarchy-cast` and writes launchers
+into `~/.local/bin`. It deliberately does not use pip: Arch ships `python`
+without pip and marks the environment externally-managed (PEP 668), and every
+dependency is a system package already.
 
 AirPlay support additionally needs [doubletake](https://github.com/omarroth/doubletake):
 
 ```bash
 yay -S doubletake
 ```
+
+Uninstall with `./uninstall.sh`. An AUR `PKGBUILD` is included but not yet
+published.
 
 ## Usage
 
