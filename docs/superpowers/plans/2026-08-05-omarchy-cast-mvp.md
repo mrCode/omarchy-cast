@@ -33,8 +33,24 @@ direct-IP connect, SRP-6a PIN pairing, credential persistence to
 `~/.config/doubletake/credentials.json` (mode 0600), and `pair-verify` on
 reconnect.
 
-**Not yet verified:** portal capture, encode, and an actual video frame reaching
-a receiver. Everything in Tasks 10–12 remains unproven against hardware.
+**Capture and encode verified against hardware** (prototype of Tasks 10–11 run
+on this laptop, Intel iGPU, 2560×1600 output):
+
+| Checked | Result |
+|---|---|
+| Portal `CreateSession`/`SelectSources`/`Start`/`OpenPipeWireRemote` | works; returns `node_id` + fd |
+| `restore_token` saved and replayed | works — second run did **not** prompt |
+| `pipewiresrc path=N fd=F` | works |
+| `vah264enc` hardware encode | works |
+| `appsink` → Python chunks (the Cast backend path) | works, 255 chunks in 4s |
+| Output decodes | 197 H.264 frames, 2560×1600, 30 fps (ffprobe) |
+| Portal handshake + pipeline start, no user interaction | **0.75 s** to first chunk |
+| Bitrate with explicit `bitrate=8000` | 6.8–7.4 Mbps |
+| Bitrate with `rate-control=cbr` and no bitrate | **21.4 Mbps** — see finding 6 |
+
+**Still unverified:** an actual frame arriving at a receiver, and everything in
+Task 12 (pychromecast, Default Media Receiver, live HTTP delivery). No
+Chromecast was available on any network tested.
 
 1. **mDNS discovery cannot be the only way to reach a device.** On one test
    network a device with AirPlay ports 7000/7100/5000 open was completely
@@ -69,6 +85,12 @@ a receiver. Everything in Tasks 10–12 remains unproven against hardware.
 5. **Pairing emits a benign scary log line.** `transient pairing failed:
    pair-setup M4 error: 2` appears immediately before the PIN prompt on every
    first pairing. Never surface it as an error.
+
+6. **An explicit encoder bitrate is mandatory.** `vah264enc rate-control=cbr`
+   with no `bitrate` auto-calculated **21.4 Mbps** at 2560×1600 — enough to
+   saturate a weak Wi-Fi link and stall the stream. Setting `bitrate=8000`
+   produced 6.8–7.4 Mbps. Every encoder in `ENCODER_ARG_TEMPLATES` must set both
+   an explicit bitrate and a bounded GOP; the tests in Task 11 enforce this.
 
 ---
 
@@ -233,7 +255,11 @@ class Config:
     encoder_ranking: list[str] = field(default_factory=lambda: list(DEFAULT_RANKING))
     airplay_port_range: str = "60000-60010"
     airplay_bitrate: int = 0
+    airplay_code: str = ""
     cast_http_port: int = 0
+    # 8000 kbps measured at ~7 Mbps actual on 2560x1600@30 (see Field Findings).
+    # Without an explicit bitrate, cbr auto-calculates ~21 Mbps.
+    cast_bitrate: int = 8000
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -258,10 +284,15 @@ def load_config(path: Path | None = None) -> Config:
         cfg.airplay_port_range = str(airplay["port_range"])
     if "bitrate" in airplay:
         cfg.airplay_bitrate = int(airplay["bitrate"])
+    if "code" in airplay:
+        # Passed to doubletake as DOUBLETAKE_CODE once upstream #26 merges.
+        cfg.airplay_code = str(airplay["code"])
 
     cast = data.get("cast", {})
     if "http_port" in cast:
         cfg.cast_http_port = int(cast["http_port"])
+    if "bitrate" in cast:
+        cfg.cast_bitrate = int(cast["bitrate"])
 
     if cfg.encoder not in ENCODERS:
         raise ValueError(f"invalid encoder: {cfg.encoder}; expected one of {ENCODERS}")
@@ -2710,6 +2741,20 @@ def test_pipeline_sets_zero_latency_for_x264():
     assert "tune=zerolatency" in desc
 
 
+def test_every_encoder_sets_an_explicit_bitrate():
+    """Without this, vah264enc auto-calculates ~21 Mbps. Verified 2026-08-05."""
+    for encoder in ("vaapi", "nvenc", "x264"):
+        desc = build_pipeline_description(1, 2, encoder, Config(cast_bitrate=4000))
+        assert "bitrate=4000" in desc
+
+
+def test_every_encoder_bounds_the_gop():
+    """A receiver joining mid-stream needs a keyframe within ~1s."""
+    for encoder, key in (("vaapi", "key-int-max"), ("nvenc", "gop-size"), ("x264", "key-int-max")):
+        desc = build_pipeline_description(1, 2, encoder, Config(fps=30))
+        assert f"{key}=30" in desc
+
+
 def test_pipeline_ends_in_appsink():
     desc = build_pipeline_description(1, 2, "vaapi", Config())
     assert desc.strip().endswith("name=sink")
@@ -2826,16 +2871,28 @@ from omarchy_cast.core.config import Config
 
 log = logging.getLogger(__name__)
 
-ENCODER_ARGS = {
-    "vaapi": "rate-control=cbr target-usage=6",
-    "nvenc": "preset=low-latency-hq rc-mode=cbr",
-    "x264": "tune=zerolatency speed-preset=veryfast key-int-max=30",
+# Verified against gst-inspect-1.0 and a live 2560x1600 capture on 2026-08-05.
+# An explicit bitrate is REQUIRED: with rate-control=cbr and bitrate unset,
+# vah264enc auto-calculated ~21 Mbps. key-int-max is REQUIRED so a receiver
+# joining an in-progress stream gets a keyframe within a second.
+ENCODER_ARG_TEMPLATES = {
+    "vaapi": "rate-control=cbr bitrate={bitrate} target-usage=6 key-int-max={gop}",
+    "nvenc": "rc-mode=cbr bitrate={bitrate} gop-size={gop}",
+    "x264": (
+        "tune=zerolatency speed-preset=veryfast bitrate={bitrate} key-int-max={gop}"
+    ),
 }
+
+
+def encoder_args(encoder: str, config: Config) -> str:
+    return ENCODER_ARG_TEMPLATES[encoder].format(
+        bitrate=config.cast_bitrate, gop=config.fps
+    )
 
 
 def build_pipeline_description(node_id: int, fd: int, encoder: str, config: Config) -> str:
     element = gst_element_for(encoder)
-    args = ENCODER_ARGS[encoder]
+    args = encoder_args(encoder, config)
     return (
         f"pipewiresrc path={node_id} fd={fd} do-timestamp=true ! "
         f"videorate ! video/x-raw,framerate={config.fps}/1 ! "
