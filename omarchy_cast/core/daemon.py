@@ -2,7 +2,10 @@ import asyncio
 import contextlib
 import logging
 import os
+import subprocess
 import time
+
+from collections.abc import Callable
 
 from omarchy_cast.backends.base import Backend, BackendError
 from omarchy_cast.core.device import PROTOCOLS, Device
@@ -13,11 +16,22 @@ from omarchy_cast.core.protocol import (
     ok,
     socket_path,
 )
-from omarchy_cast.core.session import Session, SessionState
+from omarchy_cast.core.session import InvalidTransition, Session, SessionState
 
 log = logging.getLogger(__name__)
 
 DEFAULT_PORTS = {"airplay": 7000, "cast": 8009}
+
+
+def desktop_notify(message: str) -> None:
+    """Surface a failure via mako. Best effort; never raises."""
+    try:
+        subprocess.run(
+            ["notify-send", "-u", "critical", "omarchy-cast", message],
+            check=False,
+        )
+    except OSError:
+        log.debug("notify-send unavailable", exc_info=True)
 
 
 def _device_dict(d: Device) -> dict:
@@ -36,11 +50,13 @@ class Daemon:
         discovery,
         backends: dict[str, Backend],
         idle_timeout: float = 30.0,
+        notifier: Callable[[str], None] | None = None,
     ) -> None:
         self.discovery = discovery
         self.backends = dict(backends)
         self.sessions: dict[str, Session] = {}
         self.idle_timeout = idle_timeout
+        self._notify = notifier or desktop_notify
         self._last_active = time.monotonic()
         self._stopping = asyncio.Event()
 
@@ -51,7 +67,22 @@ class Daemon:
         if session is None:
             session = Session(device)
             self.sessions[device.id] = session
-        session.transition(state, error)
+
+        try:
+            session.transition(state, error)
+        except InvalidTransition:
+            # Backends emit from background tasks (the AirPlay supervisor among
+            # them). A late or duplicate emit must not take that task down.
+            log.debug("ignoring %s -> %s for %s", session.state, state, device.id)
+            return
+
+        if state is SessionState.FAILED:
+            # waybar may be collapsed into the tray, so push it to the user too.
+            try:
+                self._notify(error or f"casting to {device.name} failed")
+            except Exception:
+                log.debug("notifier raised", exc_info=True)
+
         # Terminal states are not retained; a failed session must not block a retry.
         if state in (SessionState.IDLE, SessionState.FAILED):
             self.sessions.pop(device.id, None)

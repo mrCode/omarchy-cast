@@ -28,6 +28,7 @@ STATE_MAP = {
 }
 
 CONNECT_TIMEOUT = 30.0
+SUPERVISE_INTERVAL = 3.0
 
 
 def parse_ctl(stdout: str) -> dict:
@@ -73,13 +74,16 @@ class AirPlayBackend(Backend):
         runner: CommandRunner | None = None,
         poll_interval: float = 0.5,
         connect_timeout: float = CONNECT_TIMEOUT,
+        supervise_interval: float = SUPERVISE_INTERVAL,
     ) -> None:
         super().__init__(on_state)
         self._config = config
         self._run = runner or subprocess_runner
         self._poll_interval = poll_interval
         self._connect_timeout = connect_timeout
+        self._supervise_interval = supervise_interval
         self._daemon_started = False
+        self._supervisors: dict[str, asyncio.Task] = {}
 
     def daemon_env(self) -> dict[str, str]:
         """Environment for the doubletake daemon.
@@ -162,6 +166,7 @@ class AirPlayBackend(Backend):
                 return
             if state is SessionState.STREAMING:
                 self._emit(device, SessionState.STREAMING)
+                self._supervise(device)
                 return
 
             await asyncio.sleep(self._poll_interval)
@@ -182,11 +187,63 @@ class AirPlayBackend(Backend):
             raise BackendError(message) from exc
         self._emit(device, SessionState.STREAMING)
 
+    # -- supervision -----------------------------------------------------
+
+    def _supervise(self, device: Device) -> None:
+        """Watch a live stream so a doubletake crash does not go unnoticed.
+
+        Without this the session stays STREAMING forever after the process
+        dies: waybar keeps showing green and stop has nothing to stop.
+        """
+        self._cancel_supervisor(device.id)
+        self._supervisors[device.id] = asyncio.create_task(self._watch(device))
+
+    def _cancel_supervisor(self, device_id: str) -> None:
+        task = self._supervisors.pop(device_id, None)
+        if task is not None:
+            task.cancel()
+
+    async def _watch(self, device: Device) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self._supervise_interval)
+                try:
+                    payload = await self._ctl(["status"])
+                except BackendError as exc:
+                    self._drop(device, str(exc))
+                    return
+
+                state = STATE_MAP.get(payload.get("state", ""))
+                # AWAITING_PIN can legitimately last minutes.
+                if state in (SessionState.STREAMING, SessionState.AWAITING_PIN):
+                    continue
+
+                self._drop(device, f"doubletake reported {payload.get('state')!r}")
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # never let this escape into the event loop
+            log.debug("supervisor error", exc_info=True)
+            self._drop(device, str(exc))
+
+    def _drop(self, device: Device, detail: str) -> None:
+        self._supervisors.pop(device.id, None)
+        self._emit(
+            device,
+            SessionState.FAILED,
+            f"mirroring to {device.name} stopped unexpectedly ({detail})",
+        )
+
+    # -- teardown --------------------------------------------------------
+
     async def stop(self, device: Device) -> None:
+        self._cancel_supervisor(device.id)
         self._emit(device, SessionState.STOPPING)
         await self._exec([CTL_BIN, "disconnect", device.address])
         self._emit(device, SessionState.IDLE)
 
     async def shutdown(self) -> None:
+        for device_id in list(self._supervisors):
+            self._cancel_supervisor(device_id)
         if self._daemon_started:
             await self._exec([CTL_BIN, "disconnect"])
