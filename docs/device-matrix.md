@@ -57,8 +57,9 @@ With a default-DROP firewall only the second works. This is the real cause of
 every AirPlay failure recorded in this project. Two earlier explanations —
 *Require Password*, then *Require Device Verification* — were both wrong.
 
-**Resolved:** the AirPlay backend now runs `doubletake -target` directly, one
+**Resolved** in omarchy-cast by running `doubletake -target` directly, one
 child per session, so `-port-range` is honoured and AirPlay works.
+Reported upstream as [doubletake#27](https://github.com/omarroth/doubletake/issues/27).
 
 ### A second trap in the same area
 

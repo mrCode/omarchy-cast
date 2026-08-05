@@ -1,6 +1,10 @@
-# Draft issue for omarroth/doubletake
+# Upstream issue: doubletake `-port-range` ignored in daemon mode
 
-Not filed. Review, edit, and submit if you want it.
+**Filed:** https://github.com/omarroth/doubletake/issues/27 (2026-08-05)
+
+Kept here as the record of the investigation. omarchy-cast works around it
+by running `doubletake -target` directly rather than via its daemon; if this
+is fixed upstream, daemon mode becomes a viable alternative again.
 
 ---
 
