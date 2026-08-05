@@ -1,8 +1,12 @@
 import argparse
 import asyncio
+import json
+import subprocess
 import sys
 
 from omarchy_cast.cli.client import DaemonUnavailable, request
+from omarchy_cast.cli.menu import MANUAL_ENTRY, format_entries, parse_selection
+from omarchy_cast.cli.waybar import render
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,7 +36,77 @@ def build_parser() -> argparse.ArgumentParser:
     pin.add_argument("device_id")
     pin.add_argument("pin")
 
+    sub.add_parser("waybar", help="print waybar JSON for the cast indicator")
+    sub.add_parser("menu", help="pick a receiver via walker and start casting")
+
     return parser
+
+
+def _notify(message: str, urgent: bool = False) -> None:
+    argv = ["notify-send"]
+    if urgent:
+        argv += ["-u", "critical"]
+    subprocess.run([*argv, "omarchy-cast", message], check=False)
+
+
+def _run_waybar() -> int:
+    """Never spawns the daemon: waybar polls this every couple of seconds."""
+    try:
+        response = asyncio.run(request("status", autospawn=False))
+    except DaemonUnavailable:
+        print(json.dumps(render([])))
+        return 0
+    sessions = (response.get("data") or {}).get("sessions", [])
+    print(json.dumps(render(sessions)))
+    return 0
+
+
+def _walker(entries: list[str], prompt: str) -> str:
+    result = subprocess.run(
+        ["walker", "--dmenu", "-p", prompt],
+        input="\n".join(entries),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout
+
+
+def _prompt_for_address() -> str:
+    return _walker([], "Receiver IP address").strip()
+
+
+def _run_menu() -> int:
+    response = asyncio.run(request("list"))
+    if not response.get("ok"):
+        return _fail(response.get("error", "unknown error"))
+
+    devices = (response.get("data") or {}).get("devices", [])
+    selection = _walker(format_entries(devices), "Cast to").strip()
+    if not selection:
+        return 0
+
+    if selection == MANUAL_ENTRY:
+        address = _prompt_for_address()
+        if not address:
+            return 0
+        added = asyncio.run(request("add", address=address, protocol="airplay"))
+        if not added.get("ok"):
+            message = added.get("error", "unknown error")
+            _notify(message, urgent=True)
+            return _fail(message)
+        device_id = (added.get("data") or {})["device"]["id"]
+    else:
+        device_id = parse_selection(selection)
+        if device_id is None:
+            return 0
+
+    result = asyncio.run(request("start", device_id=device_id))
+    if not result.get("ok"):
+        message = result.get("error", "unknown error")
+        _notify(message, urgent=True)
+        return _fail(message)
+    return 0
 
 
 def _print_devices(devices: list[dict]) -> None:
@@ -76,6 +150,11 @@ def _resolve_by_address(args) -> tuple[str | None, int]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "waybar":
+        return _run_waybar()
+    if args.command == "menu":
+        return _run_menu()
 
     try:
         if args.command == "start":

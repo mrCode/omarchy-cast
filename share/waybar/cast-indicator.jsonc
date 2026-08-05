@@ -1,0 +1,10 @@
+// Add "custom/cast-indicator" to modules-right in ~/.config/waybar/config.jsonc,
+// then merge this block into the same file.
+"custom/cast-indicator": {
+  "exec": "omarchy-cast waybar",
+  "return-type": "json",
+  "interval": 2,
+  "on-click": "omarchy-cast menu",
+  "on-click-right": "omarchy-cast stop",
+  "tooltip": true
+}
