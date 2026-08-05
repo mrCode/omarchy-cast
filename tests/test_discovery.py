@@ -83,7 +83,7 @@ def test_ipv4_chosen_when_v6_listed_first():
 
 
 def test_unicode_names_survive():
-    """Real networks are full of names like 'a name with an apostrophe'."""
+    """Real networks are full of names with apostrophes and accented letters."""
     info = FakeInfo(
         "Zoë’s MacBook Air._airplay._tcp.local.",
         7000,
