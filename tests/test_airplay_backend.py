@@ -148,11 +148,13 @@ async def test_connect_timeout_mentions_firewall():
     assert states[-1][0] is SessionState.FAILED
 
 
-async def test_401_names_both_settings_without_guessing():
-    """Observed on a real AppleTV11,1 AFTER onscreen-code pairing succeeded.
+async def test_401_blames_the_ignored_port_range_not_authentication():
+    """Confirmed root cause: doubletake ignores -port-range in daemon mode.
 
-    Two tvOS settings can produce this and the response alone does not
-    distinguish them, so the message must name both rather than assert one.
+    daemon.Config has no PortMin/PortMax, so the receiver's reverse handshake
+    lands on ephemeral ports a default-DROP firewall discards. The same device
+    mirrors fine via a direct `doubletake -target` run. Earlier versions of
+    this message blamed tvOS 'Require Password', which was wrong.
     """
     runner = FakeRunner(
         results={
@@ -168,10 +170,11 @@ async def test_401_names_both_settings_without_guessing():
     with pytest.raises(BackendError) as excinfo:
         await backend.start(make_device())
     message = str(excinfo.value)
-    assert "Require Password" in message
-    assert "Require Device Verification" in message
-    assert "#26" in message
-    assert "-debug" in message
+    assert "-port-range" in message
+    assert "ephemeral" in message
+    assert "firewall" in message
+    # The old, wrong explanation must not come back.
+    assert "Require Password" not in message
     assert states[-1][0] is SessionState.FAILED
 
 

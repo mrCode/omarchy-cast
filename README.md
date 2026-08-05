@@ -154,31 +154,27 @@ frame, which costs more latency than the faster encoder saves. Override
 
 ## Known limitations
 
-**Some Apple TVs reject the mirroring stream with `HTTP 401`.** Discovery,
-pairing with the onscreen code, and credential persistence all succeed — then
-the mirroring SETUP is separately challenged for credentials doubletake 0.4.0
-cannot supply.
+**AirPlay fails behind a firewall, and `port_range` cannot currently fix it.**
 
-Two different tvOS settings can cause this and the 401 alone does not
-distinguish them:
+doubletake 0.4.0 ignores `-port-range` when running as a daemon — its
+`daemon.Config` has no port fields, so the flag is parsed and then dropped. The
+receiver's reverse handshake therefore lands on random ephemeral ports rather
+than the configured range. With a default-DROP firewall those get discarded and
+SETUP stalls or returns `HTTP 401`.
 
-- Settings → AirPlay and HomeKit → **Require Password** (a persistent 6+
-  character password)
-- Settings → AirPlay → Security → **Require Device Verification** (a 4-digit
-  onscreen code)
+Confirmed on an `AppleTV11,1`: daemon mode used UDP `36760-36762` / TCP `45771`
+despite `-port-range 60000-60010`, while a direct `doubletake -target` run on
+the same device honoured the range and mirrored successfully.
 
-Confirmed on an `AppleTV11,1` configured with an onscreen code and *no*
-password, so this is not only a password problem. Support is in flight upstream
-as [doubletake#26](https://github.com/omarroth/doubletake/issues/26); the `code`
-config key is plumbed for when it lands.
+Until this is fixed upstream, either:
 
-To diagnose your own device, capture the challenge:
+- allow inbound TCP+UDP from the receiver on the ephemeral range (broad, so
+  scope it to the receiver's address), or
+- run `doubletake -target <ip>` directly, where `-port-range` works.
 
-```bash
-doubletake -target 192.168.1.231 -debug
-```
-
-The `WWW-Authenticate` header on the 401 says which scheme the receiver wants.
+This is **not** a tvOS authentication problem. Pairing with an onscreen code,
+credential persistence and `pair-verify` all work; an Apple TV with only an
+onscreen code and no AirPlay password mirrors fine.
 
 **Casting to both protocols at once costs two encodes.** AirPlay capture is
 owned by doubletake and cannot be shared, so a simultaneous AirPlay + Chromecast

@@ -15,6 +15,9 @@ class Config:
     fps: int = 30
     encoder: str = "auto"
     encoder_ranking: list[str] = field(default_factory=lambda: list(DEFAULT_RANKING))
+    # NOTE: doubletake 0.4.0 ignores -port-range in daemon mode (its
+    # daemon.Config has no port fields), so this currently has no effect on
+    # the AirPlay path. Kept because it is correct once upstream is fixed.
     airplay_port_range: str = "60000-60010"
     airplay_bitrate: int = 0
     airplay_code: str = ""

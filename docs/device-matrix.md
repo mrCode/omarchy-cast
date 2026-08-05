@@ -10,7 +10,7 @@ happened — including failures.
 
 | Device | Model | Status | Notes |
 |---|---|---|---|
-| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ⚠️ Blocked | Discovery, direct-IP connect, onscreen-code (SRP-6a) pairing, credential persistence and `pair-verify` all succeed. The mirroring SETUP is then separately rejected with `HTTP 401`. **The device has no AirPlay password — it requires an onscreen code**, so this is not the fixed-password case, and the earlier note claiming otherwise was wrong. Cause not yet confirmed; `WWW-Authenticate` on the 401 has not been captured. Related: [doubletake#26](https://github.com/omarroth/doubletake/issues/26). |
+| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ✅ Works (direct mode) | Full mirror confirmed: `/info`, `pair-verify`, FairPlay SAP, SETUP phases 1+2, `RECORD` 200, event + data channels, NTP sync, clean TEARDOWN. Captured 1920×1080@30 via NVENC at 4147 kbps for ~56 s. Requires a direct `doubletake -target` run — **daemon mode fails**, see below. Device has an onscreen code and no AirPlay password. |
 | Apple TV 4K (2022, 3rd gen) | `AppleTV14,1` | ❓ Untested | Discovered and reachable during testing; not connected to. Listed as working upstream. |
 | LG webOS TV | `KWS85U02` | ❓ Untested | Advertises `_airplay._tcp`. Third-party AirPlay receivers are the flakier path. |
 
@@ -39,13 +39,23 @@ Note: `vah264enc` with `rate-control=cbr` and no explicit `bitrate`
 auto-calculated **21.4 Mbps**, enough to saturate a weak link. An explicit
 bitrate is always set now.
 
-## Open question
+## Confirmed upstream bug: `-port-range` ignored in daemon mode
 
-The `AppleTV11,1` 401 above is unexplained. Pairing succeeds, so it is not a
-missing-pairing problem. Capturing the `WWW-Authenticate` header from
-`doubletake -target <ip> -debug` would say whether the receiver is asking for
-RFC 2069 Digest (the case [doubletake#26](https://github.com/omarroth/doubletake/issues/26)
-addresses) or something else. Until that is captured, do not assume #26 fixes it.
+doubletake 0.4.0's `daemon.Config` (internal/daemon/daemon.go) has no
+`PortMin`/`PortMax` fields. `-port-range` is parsed in `cmd/doubletake/main.go`
+and passed into `StreamConfig` on the direct path only, so in `-daemonize` mode
+it is silently dropped.
+
+Measured on the same device, same flags, minutes apart:
+
+| Mode | Ports actually bound | Result |
+|---|---|---|
+| `-daemonize` + `doubletake-ctl connect` | UDP 36760-36762, TCP 45771 | SETUP stalls, then `HTTP 401` / i/o timeout |
+| `doubletake -target` | UDP 60000-60002, TCP 60003 | Mirrors successfully |
+
+With a default-DROP firewall only the second works. This is the real cause of
+every AirPlay failure recorded in this project. Two earlier explanations —
+*Require Password*, then *Require Device Verification* — were both wrong.
 
 ## Networks
 
