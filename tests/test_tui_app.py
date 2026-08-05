@@ -1,5 +1,7 @@
 """Drives the real Textual app headlessly against a fake daemon."""
 
+import asyncio
+
 import pytest
 
 from omarchy_cast.tui import app as tui_app
@@ -18,10 +20,15 @@ def fake_daemon(monkeypatch):
              "model": "Chromecast", "address": "192.168.1.6"},
         ],
         "sessions": [],
+        "start_delay": 0.0,
     }
 
     async def _request(cmd, path=None, **kwargs):
         calls.append((cmd, kwargs))
+        if cmd == "start":
+            # A real start takes ~6s. Instant fakes make concurrent presses
+            # sequential and hide exactly the bug this suite must catch.
+            await asyncio.sleep(state["start_delay"])
         if cmd == "list":
             return {"ok": True, "data": {"devices": state["devices"]}}
         if cmd == "status":
@@ -92,3 +99,46 @@ async def test_daemon_unavailable_is_shown_not_crashed(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         assert "unavailable" in str(app.query_one("#summary").content)
+
+
+async def test_repeated_enter_starts_only_one_cast(fake_daemon):
+    """Five Enter presses once opened five portal sessions and switched the
+    display five times -- the screen appeared to loop. Start is now guarded.
+    """
+    calls, state = fake_daemon
+    state["start_delay"] = 0.5
+    app = tui_app.CastApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#devices").focus()
+        for _ in range(5):
+            await pilot.press("enter")
+        await pilot.pause()
+        assert len([c for c in calls if c[0] == "start"]) == 1
+
+
+async def test_start_is_refused_while_already_streaming(fake_daemon):
+    calls, state = fake_daemon
+    state["sessions"] = [{
+        "id": "airplay:1", "name": "Living Room", "protocol": "airplay",
+        "state": "streaming", "error": None,
+    }]
+    app = tui_app.CastApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#devices").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not [c for c in calls if c[0] == "start"]
+        assert "already" in str(app.query_one("#summary").content)
+
+
+async def test_connecting_message_sets_expectations(fake_daemon):
+    calls, state = fake_daemon
+    state["start_delay"] = 0.5
+    app = tui_app.CastApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#devices").focus()
+        await pilot.press("enter")
+        assert "few seconds" in str(app.query_one("#summary").content)

@@ -269,9 +269,19 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
+    # The daemon is usually auto-spawned with its pipes sent to /dev/null, so
+    # a log file is the only way to diagnose anything after the fact.
+    from omarchy_cast.core.display import state_dir
+
+    log_dir = state_dir()
+    log_dir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(log_dir / "daemon.log"),
+            logging.StreamHandler(),
+        ],
     )
 
     # A previous run may have died mid-cast with the display still switched.

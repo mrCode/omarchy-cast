@@ -95,6 +95,11 @@ class CastApp(App):
         super().__init__()
         self._rows: list[dict] = []
         self._pin_pending: str | None = None
+        # Start takes several seconds with little visible feedback, so a user
+        # will reasonably press Enter again. Without this guard every press
+        # opened another portal session and switched the display again --
+        # observed as the screen "looping" and five stacked casts.
+        self._busy = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -167,20 +172,50 @@ class CastApp(App):
 
     # -- actions ---------------------------------------------------------
 
-    @work
-    async def action_start(self) -> None:
+    def action_start(self) -> None:
+        """Synchronous on purpose.
+
+        The guard must be set before any await, otherwise several rapid Enter
+        presses all dispatch workers before the first marks us busy -- which is
+        exactly how five stacked casts and a looping display happened.
+        """
+        if self._busy:
+            return
         row = self._selected()
         if row is None:
             return
-        self._set_summary(f"connecting to {row['name']}...", "connecting")
-        await self._send("start", device_id=row["id"])
+        if row.get("state") in ("connecting", "awaiting_pin", "streaming"):
+            self._set_summary(f"{row['name']} is already {row['state']}", "connecting")
+            return
 
-    @work
-    async def action_stop(self) -> None:
+        self._busy = True
+        self._set_summary(
+            f"connecting to {row['name']} (this takes a few seconds)...", "connecting"
+        )
+        self._start_worker(row["id"])
+
+    @work(exclusive=True)
+    async def _start_worker(self, device_id: str) -> None:
+        try:
+            await self._send("start", device_id=device_id)
+        finally:
+            self._busy = False
+
+    def action_stop(self) -> None:
+        if self._busy:
+            return
         row = self._selected()
-        await self._send("stop", device_id=row["id"] if row else None)
+        self._busy = True
+        self._stop_worker(row["id"] if row else None)
 
-    @work
+    @work(exclusive=True)
+    async def _stop_worker(self, device_id: str | None) -> None:
+        try:
+            await self._send("stop", device_id=device_id)
+        finally:
+            self._busy = False
+
+    @work(exclusive=True)
     async def action_add(self) -> None:
         address = await self.push_screen_wait(
             PromptScreen("Receiver address", "192.168.1.231")
@@ -192,7 +227,7 @@ class CastApp(App):
         )
         await self._send("add", address=address, protocol=(protocol or "airplay"))
 
-    @work
+    @work(exclusive=True)
     async def _ask_for_pin(self, device_id: str) -> None:
         pin = await self.push_screen_wait(
             PromptScreen("PIN shown on the receiver", "1234")

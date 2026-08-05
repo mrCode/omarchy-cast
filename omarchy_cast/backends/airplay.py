@@ -19,8 +19,10 @@ plain process exit rather than a polling loop.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
+import signal
 import shutil
 from pathlib import Path
 from collections.abc import Awaitable, Callable
@@ -68,7 +70,13 @@ class ProcessLike:
 
 
 class _Process:
-    """Wraps an asyncio subprocess with stderr folded into stdout."""
+    """Wraps an asyncio subprocess with stderr folded into stdout.
+
+    The child runs in its own process group so terminate() can take its
+    GStreamer capture pipelines with it. Signalling only doubletake leaves
+    those running, re-parented to init, still holding a portal node and the
+    GPU -- five of them accumulated during one bad TUI session.
+    """
 
     def __init__(self, proc) -> None:
         self._proc = proc
@@ -85,8 +93,14 @@ class _Process:
         await self._proc.stdin.drain()
 
     def terminate(self) -> None:
-        if self._proc.returncode is None:
-            self._proc.terminate()
+        if self._proc.returncode is not None:
+            return
+        try:
+            os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            # Fall back to signalling just the child.
+            with contextlib.suppress(ProcessLookupError):
+                self._proc.terminate()
 
     async def wait(self) -> int:
         return await self._proc.wait()
@@ -99,6 +113,7 @@ async def subprocess_spawner(argv: list[str], env: dict) -> _Process:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env=env,
+        start_new_session=True,   # own process group; see _Process.terminate
     )
     return _Process(proc)
 

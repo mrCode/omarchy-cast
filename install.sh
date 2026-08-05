@@ -59,6 +59,16 @@ fi
 # environment externally-managed (PEP 668), so `pip install --user` is both
 # unavailable and refused. Every dependency is a system package already, so the
 # package is copied into place and driven by small launcher scripts.
+# The daemon is long-lived and holds the old code in memory, so an upgrade is
+# silently a no-op until it restarts. This bit us during testing: a "verified"
+# fix was actually exercising the previous build.
+if pgrep -f 'omarchy_cast.core.daemon' >/dev/null 2>&1; then
+  msg "stopping the running daemon so the new build takes effect"
+  command -v omarchy-cast >/dev/null 2>&1 && omarchy-cast stop >/dev/null 2>&1 || true
+  pkill -f 'omarchy_cast\.core\.daemon' >/dev/null 2>&1 || true
+  sleep 1
+fi
+
 msg "installing package → $LIB_DIR"
 mkdir -p "$LIB_DIR" "$BIN_DIR" "$SHARE_DIR/waybar" "$CFG_DIR"
 rm -rf "${LIB_DIR:?}/omarchy_cast"
