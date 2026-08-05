@@ -1,6 +1,6 @@
 # Maintainer: Basem Aljedai <baljedai@gmail.com>
 pkgname=omarchy-cast
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Desktop mirroring for Omarchy/Hyprland to AirPlay receivers (experimental Google Cast support)"
 arch=('any')

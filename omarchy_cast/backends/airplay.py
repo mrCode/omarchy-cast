@@ -352,7 +352,9 @@ class AirPlayBackend(Backend):
         if session.pump is not None:
             session.pump.cancel()
             try:
-                await session.pump
-            except (asyncio.CancelledError, Exception):
+                # Bounded: an unbounded await here hung daemon shutdown and left
+                # doubletake running with nothing owning it.
+                await asyncio.wait_for(asyncio.shield(session.pump), timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError, Exception):
                 pass
         self._restore_display()

@@ -115,7 +115,12 @@ class CastApp(App):
 
     # -- data ------------------------------------------------------------
 
-    @work(exclusive=True)
+    # Groups matter: Textual's exclusive=True cancels every worker in the SAME
+    # group, and the default group is shared. With all workers in it, the 2s
+    # refresh cancelled an in-flight start (which needs ~6s), aborting the cast
+    # and bouncing the display resolution. Refresh and user actions must not be
+    # able to cancel each other.
+    @work(exclusive=True, group="refresh")
     async def action_refresh(self) -> None:
         try:
             devices, status = await asyncio.gather(
@@ -194,7 +199,7 @@ class CastApp(App):
         )
         self._start_worker(row["id"])
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="control")
     async def _start_worker(self, device_id: str) -> None:
         try:
             await self._send("start", device_id=device_id)
@@ -208,14 +213,14 @@ class CastApp(App):
         self._busy = True
         self._stop_worker(row["id"] if row else None)
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="control")
     async def _stop_worker(self, device_id: str | None) -> None:
         try:
             await self._send("stop", device_id=device_id)
         finally:
             self._busy = False
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="control")
     async def action_add(self) -> None:
         address = await self.push_screen_wait(
             PromptScreen("Receiver address", "192.168.1.231")
@@ -227,7 +232,7 @@ class CastApp(App):
         )
         await self._send("add", address=address, protocol=(protocol or "airplay"))
 
-    @work(exclusive=True)
+    @work(exclusive=True, group="control")
     async def _ask_for_pin(self, device_id: str) -> None:
         pin = await self.push_screen_wait(
             PromptScreen("PIN shown on the receiver", "1234")

@@ -29,6 +29,7 @@ def fake_daemon(monkeypatch):
             # A real start takes ~6s. Instant fakes make concurrent presses
             # sequential and hide exactly the bug this suite must catch.
             await asyncio.sleep(state["start_delay"])
+            calls.append(("start-completed", {}))
         if cmd == "list":
             return {"ok": True, "data": {"devices": state["devices"]}}
         if cmd == "status":
@@ -142,3 +143,35 @@ async def test_connecting_message_sets_expectations(fake_daemon):
         app.query_one("#devices").focus()
         await pilot.press("enter")
         assert "few seconds" in str(app.query_one("#summary").content)
+
+
+async def test_periodic_refresh_does_not_cancel_an_in_flight_start(fake_daemon):
+    """Textual's exclusive=True cancels workers in the SAME group, and the
+    default group is shared. With refresh and start in one group, the 2s
+    refresh killed a ~6s start mid-flight: the cast aborted and the display
+    bounced back, which looked like the screen looping.
+    """
+    calls, state = fake_daemon
+    state["start_delay"] = 0.6
+
+    app = tui_app.CastApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#devices").focus()
+        await pilot.press("enter")
+
+        # Refresh repeatedly while the start is still running.
+        for _ in range(4):
+            await asyncio.sleep(0.1)
+            app.action_refresh()
+        await asyncio.sleep(0.8)
+
+        assert ("start-completed", {}) in calls, "refresh cancelled the start"
+
+
+async def test_refresh_and_control_are_in_different_worker_groups():
+    """Guards the fix directly: same group means they cancel each other."""
+    import inspect
+    src = inspect.getsource(tui_app)
+    assert 'group="refresh"' in src
+    assert 'group="control"' in src

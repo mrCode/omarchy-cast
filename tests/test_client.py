@@ -59,3 +59,35 @@ async def test_daemon_closing_without_reply_is_actionable(tmp_path):
     finally:
         server.close()
         await server.wait_closed()
+
+
+async def test_stale_socket_is_replaced_not_fatal(tmp_path, monkeypatch):
+    """A daemon that dies without cleaning up leaves the socket behind. The
+    existence check then skips the spawn, and every command fails with
+    'connection refused' until someone removes the file by hand.
+    """
+    from omarchy_cast.cli import client
+
+    sock = tmp_path / "stale.sock"
+    sock.write_text("")          # a file, but nothing listening
+    spawned = []
+
+    def fake_spawn():
+        spawned.append(True)
+
+        async def serve():
+            await run_echo_server(sock, {"ok": True, "data": {"respawned": True}})
+
+        asyncio.get_running_loop().create_task(serve())
+
+    monkeypatch.setattr(client, "_spawn_daemon", fake_spawn)
+    resp = await request("status", path=sock)
+    assert spawned, "should have respawned the daemon"
+    assert resp["data"]["respawned"] is True
+
+
+async def test_stale_socket_without_autospawn_still_raises(tmp_path):
+    sock = tmp_path / "stale2.sock"
+    sock.write_text("")
+    with pytest.raises(DaemonUnavailable):
+        await request("status", path=sock, autospawn=False)

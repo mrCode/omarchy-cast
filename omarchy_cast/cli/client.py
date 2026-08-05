@@ -1,5 +1,7 @@
 import asyncio
+import contextlib
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -7,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from omarchy_cast.core.protocol import encode_request, socket_path
+
+log = logging.getLogger(__name__)
 
 SPAWN_TIMEOUT = 5.0
 
@@ -53,7 +57,20 @@ async def request(
     try:
         reader, writer = await asyncio.open_unix_connection(str(path))
     except (ConnectionRefusedError, FileNotFoundError) as exc:
-        raise DaemonUnavailable(f"cannot reach daemon at {path}: {exc}") from exc
+        # A daemon that died without cleaning up leaves the socket file behind.
+        # The existence check above then skips the spawn and every command
+        # fails with "connection refused" until someone deletes it by hand.
+        if not autospawn:
+            raise DaemonUnavailable(f"cannot reach daemon at {path}: {exc}") from exc
+        log.debug("stale socket at %s; removing and respawning", path)
+        with contextlib.suppress(OSError):
+            path.unlink()
+        _spawn_daemon()
+        await _wait_for_socket(path, SPAWN_TIMEOUT)
+        try:
+            reader, writer = await asyncio.open_unix_connection(str(path))
+        except (ConnectionRefusedError, FileNotFoundError) as exc2:
+            raise DaemonUnavailable(f"cannot reach daemon at {path}: {exc2}") from exc2
 
     try:
         writer.write(encode_request(cmd, **kwargs))

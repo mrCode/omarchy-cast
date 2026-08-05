@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import signal
 import subprocess
 import time
 
@@ -116,6 +117,9 @@ class Daemon:
         try:
             return await handler(request)
         except BackendError as exc:
+            # Logged as well as returned: a client that disconnects mid-request
+            # would otherwise take the only explanation with it.
+            log.error("%s failed: %s", cmd, exc)
             return err(str(exc))
 
     async def _cmd_list(self, request: dict) -> dict:
@@ -219,10 +223,18 @@ class Daemon:
                 response = await self.handle(request)
             writer.write(encode_response(response))
             await writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            # The client went away before reading the reply -- routine when a
+            # UI cancels a request. Not worth a traceback.
+            log.debug("client disconnected before reading the response")
         finally:
             writer.close()
             with contextlib.suppress(Exception):
                 await writer.wait_closed()
+
+    def _on_signal(self, sig) -> None:
+        log.info("received %s, shutting down", getattr(sig, "name", sig))
+        self._stopping.set()
 
     async def _idle_watchdog(self) -> None:
         while not self._stopping.is_set():
@@ -231,13 +243,25 @@ class Daemon:
                 self._last_active = time.monotonic()
                 continue
             if time.monotonic() - self._last_active > self.idle_timeout:
-                log.info("idle for %.0fs, exiting", self.idle_timeout)
+                log.info(
+                    "idle for %.0fs, exiting (sessions=%s)",
+                    self.idle_timeout,
+                    {k: str(v.state) for k, v in self.sessions.items()} or "none",
+                )
                 self._stopping.set()
 
     async def serve(self, path=None) -> None:
         path = path or socket_path()
         if path.exists():
             path.unlink()
+
+        # Without these, SIGTERM kills the process outright and the cleanup
+        # below never runs -- leaving doubletake and its capture pipelines
+        # alive with nothing owning them. Logout, reboot and pkill all send it.
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, self._on_signal, sig)
 
         self.discovery.start()
         server = await asyncio.start_unix_server(self._on_client, path=str(path))
@@ -250,7 +274,12 @@ class Daemon:
             server.close()
             await server.wait_closed()
             for backend in self.backends.values():
-                await backend.shutdown()
+                try:
+                    # Never let one backend's shutdown strand the others'
+                    # children; a hang here previously orphaned doubletake.
+                    await asyncio.wait_for(backend.shutdown(), timeout=5.0)
+                except Exception:
+                    log.warning("backend %s did not shut down cleanly", backend.protocol)
             self.discovery.stop()
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()

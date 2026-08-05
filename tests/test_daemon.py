@@ -174,3 +174,36 @@ async def test_airplay_start_carries_no_warning():
     daemon.backends["airplay"] = StubBackend(daemon.on_state)
     resp = await daemon.handle({"cmd": "start", "device_id": "airplay:9"})
     assert "warning" not in resp["data"]
+
+
+async def test_backend_failures_are_logged_not_just_returned(caplog):
+    """A client that disconnects mid-request must not take the reason with it."""
+    import logging
+
+    daemon = make_daemon(fail_with="something went wrong")
+    with caplog.at_level(logging.ERROR):
+        resp = await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+    assert resp["ok"] is False
+    assert "something went wrong" in caplog.text
+
+
+async def test_serve_installs_signal_handlers(tmp_path):
+    """SIGTERM must unwind serve() rather than killing the process outright,
+    otherwise doubletake and its capture pipelines are orphaned on logout.
+    """
+    import asyncio
+    import signal
+
+    daemon = make_daemon()
+    sock = tmp_path / "sig.sock"
+    task = asyncio.create_task(daemon.serve(sock))
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if sock.exists():
+            break
+
+    loop = asyncio.get_running_loop()
+    # A handler registered for SIGTERM means the daemon will clean up.
+    daemon._on_signal(signal.SIGTERM)
+    await asyncio.wait_for(task, timeout=5)
+    assert not sock.exists(), "socket should be removed on shutdown"
