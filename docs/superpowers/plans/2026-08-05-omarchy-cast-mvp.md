@@ -114,7 +114,7 @@ Chromecast was available on any network tested.
   - `Config` dataclass with fields `fps: int`, `encoder: str`, `airplay_port_range: str`, `airplay_bitrate: int`, `cast_http_port: int`, `encoder_ranking: list[str]`
   - `load_config(path: Path | None = None) -> Config` — `omarchy_cast.core.config`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_device.py`:
 
@@ -172,12 +172,12 @@ def test_rejects_unknown_encoder(tmp_path):
         raise AssertionError("expected ValueError")
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_device.py tests/test_config.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast'`
 
-- [ ] **Step 3: Write `pyproject.toml`**
+- [x] **Step 3: Write `pyproject.toml`**
 
 ```toml
 [build-system]
@@ -206,7 +206,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 ```
 
-- [ ] **Step 4: Write the minimal implementation**
+- [x] **Step 4: Write the minimal implementation**
 
 `omarchy_cast/__init__.py` and `omarchy_cast/core/__init__.py`: empty files.
 
@@ -304,13 +304,13 @@ def load_config(path: Path | None = None) -> Config:
 
 `LICENSE`: standard MIT text, `Copyright (c) 2026 Basem Aljedai`.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/test_device.py tests/test_config.py -v`
 Expected: PASS (13 tests — the listed ones plus coverage for the `[cast]` and
 `[airplay]` sections and the mutable-default guard)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add pyproject.toml LICENSE omarchy_cast tests
@@ -332,7 +332,7 @@ git commit -m "feat: add Device model and config loading"
   - `Session(device: Device)` with `.state`, `.error`, `.transition(new: SessionState, error: str | None = None) -> None`, `.is_active` property
   - `InvalidTransition(Exception)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_session.py`:
 
@@ -405,12 +405,12 @@ def test_is_active_only_while_connecting_or_streaming():
     assert not s.is_active
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_session.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.core.session'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/core/session.py`:
 
@@ -474,12 +474,12 @@ class Session:
         self.state = new
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_session.py -v`
 Expected: PASS (7 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/core/session.py tests/test_session.py
@@ -504,7 +504,7 @@ git commit -m "feat: add session state machine"
   - `gst_element_for(encoder: str) -> str`
   - `NoEncoderAvailable(Exception)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_encoder.py`:
 
@@ -566,12 +566,12 @@ def test_gst_element_lookup():
     assert gst_element_for("vaapi") == "vah264enc"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_encoder.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.capture'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/capture/__init__.py`: empty file.
 
@@ -635,12 +635,12 @@ def select_encoder(config: Config, available: set[str]) -> str:
     )
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_encoder.py -v`
 Expected: PASS (8 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/capture tests/test_encoder.py
@@ -665,7 +665,7 @@ git commit -m "feat: add encoder probing and ranking"
 
 `info` is a `zeroconf.ServiceInfo`-shaped object: attributes `name: str`, `port: int`, `properties: dict[bytes, bytes]`, and method `parsed_addresses() -> list[str]`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_discovery.py`:
 
@@ -737,12 +737,12 @@ def test_ipv6_only_device_is_skipped():
     assert device_from_cast(info) is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_discovery.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.core.discovery'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/core/discovery.py`:
 
@@ -874,12 +874,12 @@ class Discovery:
                 self._devices[device.id] = device
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_discovery.py -v`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/core/discovery.py tests/test_discovery.py
@@ -904,7 +904,7 @@ git commit -m "feat: add shared mDNS discovery for AirPlay and Cast"
   - `Backend` ABC: class attribute `protocol: str`; `__init__(self, on_state: StateCallback)`; `async def start(self, device: Device) -> None`; `async def stop(self, device: Device) -> None`; `async def submit_pin(self, device: Device, pin: str) -> None`; `async def shutdown(self) -> None`
   - `StubBackend(on_state, *, fail_with: str | None = None, needs_pin: bool = False)` — used by daemon tests, ships in the package so tests need no fixtures directory
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_backend_base.py`:
 
@@ -967,7 +967,7 @@ async def test_stub_stop_returns_to_idle():
     assert seen[-2:] == [SessionState.STOPPING, SessionState.IDLE]
 ```
 
-- [ ] **Step 2: Add pytest-asyncio and run to verify failure**
+- [x] **Step 2: Add pytest-asyncio and run to verify failure**
 
 Install: `sudo pacman -S --needed python-pytest-asyncio`
 
@@ -980,7 +980,7 @@ asyncio_mode = "auto"
 Run: `pytest tests/test_backend_base.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.backends'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/backends/__init__.py`: empty file.
 
@@ -1067,12 +1067,12 @@ class StubBackend(Backend):
         self._emit(device, SessionState.IDLE)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_backend_base.py -v`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/backends pyproject.toml tests/test_backend_base.py
@@ -1100,7 +1100,7 @@ git commit -m "feat: add Backend interface and stub backend"
 
 Commands: `list`, `start` (`device_id`), `stop` (`device_id` optional — omitted stops all), `status`, `pin` (`device_id`, `pin`), `quit`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_protocol.py`:
 
@@ -1245,12 +1245,12 @@ async def test_no_backend_for_protocol_errors():
     assert "no backend" in resp["error"]
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_protocol.py tests/test_daemon.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.core.protocol'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/core/protocol.py`:
 
@@ -1488,12 +1488,12 @@ def main() -> None:
     raise SystemExit("omarchy-castd is not wired up until Task 12")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_protocol.py tests/test_daemon.py -v`
 Expected: PASS (14 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/core/protocol.py omarchy_cast/core/daemon.py tests/test_protocol.py tests/test_daemon.py
@@ -1520,7 +1520,7 @@ git commit -m "feat: add daemon socket protocol and request handling"
 
 CLI surface: `omarchy-cast list`, `start <device-id>`, `stop [device-id]`, `status`, `pin <device-id> <pin>`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_client.py`:
 
@@ -1612,12 +1612,12 @@ def test_stop_without_device_sends_no_device_id(fake_request):
     assert calls[0] == ("stop", {"device_id": None})
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_client.py tests/test_cli_main.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.cli'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/cli/__init__.py`: empty file.
 
@@ -1775,12 +1775,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_client.py tests/test_cli_main.py -v`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/cli tests/test_client.py tests/test_cli_main.py
@@ -1807,7 +1807,7 @@ git commit -m "feat: add CLI client with daemon auto-spawn"
 
 The indicator must stay visible in both states, colour-coded rather than hidden — matching the existing `custom/idle-indicator` and `custom/screensaver-indicator` convention in this waybar config.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_waybar.py`:
 
@@ -1876,12 +1876,12 @@ def test_garbage_selection_returns_none():
     assert parse_selection("no id here") is None
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_waybar.py tests/test_menu.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.cli.waybar'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/cli/waybar.py`:
 
@@ -1940,7 +1940,7 @@ def parse_selection(line: str) -> str | None:
     return match.group(1) if match else None
 ```
 
-- [ ] **Step 4: Wire both into the CLI**
+- [x] **Step 4: Wire both into the CLI**
 
 In `omarchy_cast/cli/main.py`, add to `build_parser()` after the `pin` parser:
 
@@ -2014,7 +2014,7 @@ In `main()`, insert this immediately after the `args = build_parser().parse_args
         return _run_menu()
 ```
 
-- [ ] **Step 5: Write the waybar snippet**
+- [x] **Step 5: Write the waybar snippet**
 
 `share/waybar/cast-indicator.jsonc`:
 
@@ -2041,17 +2041,17 @@ Add to `share/waybar/cast-indicator.css`:
 #custom-cast-indicator.failed { color: @red; }
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `pytest tests/test_waybar.py tests/test_menu.py -v`
 Expected: PASS (9 tests)
 
-- [ ] **Step 7: Verify the full suite still passes**
+- [x] **Step 7: Verify the full suite still passes**
 
 Run: `pytest -v`
 Expected: PASS, all tests green
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add omarchy_cast/cli share/waybar tests/test_waybar.py tests/test_menu.py
@@ -2101,7 +2101,7 @@ so `vah264enc` — the default encoder from Task 3 — is missing on a fresh ins
 yay -S --needed doubletake gst-plugin-va
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_airplay_backend.py`:
 
@@ -2287,12 +2287,12 @@ async def test_missing_doubletake_binary_is_actionable():
         await backend.start(make_device())
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_airplay_backend.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.backends.airplay'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/backends/airplay.py`:
 
@@ -2464,12 +2464,12 @@ class AirPlayBackend(Backend):
             await self._exec([CTL_BIN, "disconnect"])
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_airplay_backend.py -v`
 Expected: PASS (10 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/backends/airplay.py tests/test_airplay_backend.py
@@ -2496,7 +2496,7 @@ git commit -m "feat: add AirPlay backend delegating to doubletake"
 
 Only the pure helpers are unit-tested; `open_screencast` needs a live compositor and is exercised manually in Task 13.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_portal.py`:
 
@@ -2541,12 +2541,12 @@ def test_blank_restore_token_reads_as_none(tmp_path, monkeypatch):
     assert load_restore_token() is None
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_portal.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.capture.portal'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/capture/portal.py`:
 
@@ -2687,12 +2687,12 @@ async def open_screencast(bus=None) -> PortalSession:
     return PortalSession(fd=fd, node_id=node_id)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/test_portal.py -v`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/capture/portal.py tests/test_portal.py
@@ -2718,7 +2718,7 @@ git commit -m "feat: add xdg-desktop-portal ScreenCast session handling"
   - `format_headers(content_type: str) -> bytes`
   - `local_address_for(target: str) -> str` — the LAN address a given receiver would reach us on
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `tests/test_pipeline.py`:
 
@@ -2858,12 +2858,12 @@ async def test_unknown_path_returns_404():
         await server.stop()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `pytest tests/test_pipeline.py tests/test_http.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.capture.pipeline'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/capture/pipeline.py`:
 
@@ -3072,12 +3072,12 @@ class StreamServer:
                 await writer.wait_closed()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_pipeline.py tests/test_http.py -v`
 Expected: PASS (12 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add omarchy_cast/capture/pipeline.py omarchy_cast/capture/http.py tests/test_pipeline.py tests/test_http.py
@@ -3102,7 +3102,7 @@ git commit -m "feat: add GStreamer capture pipeline and HTTP stream server"
 
 The two factory arguments exist so tests can inject fakes; production defaults build the real pipeline and a real `pychromecast.Chromecast`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/test_cast_backend.py`:
 
@@ -3237,12 +3237,12 @@ async def test_cast_does_not_support_pin():
         await backend.submit_pin(make_device(), "1234")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/test_cast_backend.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'omarchy_cast.backends.cast'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `omarchy_cast/backends/cast.py`:
 
@@ -3398,7 +3398,7 @@ class CastBackend(Backend):
         await self._teardown()
 ```
 
-- [ ] **Step 4: Replace the daemon `main()` stub**
+- [x] **Step 4: Replace the daemon `main()` stub**
 
 In `omarchy_cast/core/daemon.py`, replace the `main()` function with:
 
@@ -3434,17 +3434,17 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/test_cast_backend.py -v`
 Expected: PASS (6 tests)
 
-- [ ] **Step 6: Run the whole suite**
+- [x] **Step 6: Run the whole suite**
 
 Run: `pytest -v`
 Expected: PASS, all tests green
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add omarchy_cast/backends/cast.py omarchy_cast/core/daemon.py tests/test_cast_backend.py
@@ -3466,7 +3466,7 @@ git commit -m "feat: add Cast backend and wire up the daemon"
 - Consumes: everything.
 - Produces: an installable package.
 
-- [ ] **Step 1: Write the README**
+- [x] **Step 1: Write the README**
 
 `README.md` must contain, at minimum:
 
@@ -3480,18 +3480,18 @@ git commit -m "feat: add Cast backend and wire up the daemon"
   ```
 - A link to `docs/device-matrix.md`.
 
-- [ ] **Step 2: Write the device matrix**
+- [x] **Step 2: Write the device matrix**
 
 `docs/device-matrix.md`: a table with columns `Device | Protocol | Status | Notes`, seeded with the devices the author has tested and an invitation to open an issue with results. Start it with whatever is verified in Step 6 below — do not invent entries.
 
-- [ ] **Step 3: Write `install.sh` and `uninstall.sh`**
+- [x] **Step 3: Write `install.sh` and `uninstall.sh`**
 
 Follow the `~/workspace/omarchy-prayer/install.sh` pattern. `install.sh` must:
 1. Check for `doubletake` and print the `paru -S doubletake` hint if missing, without failing the install.
 2. `pip install --user .` or install to `~/.local`.
 3. Print the waybar and keybind snippets to add, rather than editing the user's configs in place.
 
-- [ ] **Step 4: Write the PKGBUILD**
+- [x] **Step 4: Write the PKGBUILD**
 
 ```bash
 pkgname=omarchy-cast
@@ -3527,12 +3527,12 @@ package() {
 
 Replace `sha256sums=('SKIP')` with the real checksum once a tag exists.
 
-- [ ] **Step 5: Verify the full test suite passes**
+- [x] **Step 5: Verify the full test suite passes**
 
 Run: `pytest -v`
 Expected: PASS, all tests green. Record the count.
 
-- [ ] **Step 6: Manual verification against real hardware**
+- [ ] **Step 6: Manual verification against real hardware** (PARTIAL - see docs/device-matrix.md)
 
 These cannot be automated. Run each and record the result in `docs/device-matrix.md`:
 
@@ -3548,7 +3548,7 @@ These cannot be automated. Run each and record the result in `docs/device-matrix
 
 If any step fails, fix it before proceeding. Do not mark this task complete with a failing step.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add README.md install.sh uninstall.sh PKGBUILD docs/device-matrix.md
