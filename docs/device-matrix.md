@@ -10,7 +10,7 @@ happened — including failures.
 
 | Device | Model | Status | Notes |
 |---|---|---|---|
-| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ⚠️ Blocked | Discovery, direct-IP connect, SRP-6a PIN pairing, credential persistence and `pair-verify` all succeed. Mirroring then fails with `HTTP 401` because the device has *Require Password* enabled — [doubletake#26](https://github.com/omarroth/doubletake/issues/26). Untested with that setting off. |
+| Apple TV 4K (2021, 2nd gen) | `AppleTV11,1` | ⚠️ Blocked | Discovery, direct-IP connect, onscreen-code (SRP-6a) pairing, credential persistence and `pair-verify` all succeed. The mirroring SETUP is then separately rejected with `HTTP 401`. **The device has no AirPlay password — it requires an onscreen code**, so this is not the fixed-password case, and the earlier note claiming otherwise was wrong. Cause not yet confirmed; `WWW-Authenticate` on the 401 has not been captured. Related: [doubletake#26](https://github.com/omarroth/doubletake/issues/26). |
 | Apple TV 4K (2022, 3rd gen) | `AppleTV14,1` | ❓ Untested | Discovered and reachable during testing; not connected to. Listed as working upstream. |
 | LG webOS TV | `KWS85U02` | ❓ Untested | Advertises `_airplay._tcp`. Third-party AirPlay receivers are the flakier path. |
 
@@ -38,6 +38,14 @@ Verified on the development machine (ASUS ROG Zephyrus G16 GU605CR, Intel iGPU,
 Note: `vah264enc` with `rate-control=cbr` and no explicit `bitrate`
 auto-calculated **21.4 Mbps**, enough to saturate a weak link. An explicit
 bitrate is always set now.
+
+## Open question
+
+The `AppleTV11,1` 401 above is unexplained. Pairing succeeds, so it is not a
+missing-pairing problem. Capturing the `WWW-Authenticate` header from
+`doubletake -target <ip> -debug` would say whether the receiver is asking for
+RFC 2069 Digest (the case [doubletake#26](https://github.com/omarroth/doubletake/issues/26)
+addresses) or something else. Until that is captured, do not assume #26 fixes it.
 
 ## Networks
 

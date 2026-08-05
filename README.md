@@ -154,12 +154,31 @@ frame, which costs more latency than the faster encoder saves. Override
 
 ## Known limitations
 
-**Password-protected AirPlay receivers do not work.** A receiver with *Require
-Password* enabled (Settings → AirPlay and HomeKit on an Apple TV) challenges the
-mirroring setup with HTTP Digest auth, which doubletake 0.4.0 cannot answer. It
-fails with `HTTP 401`. This affects most shared and corporate Apple TVs. Support
-is an open upstream PR, [doubletake#26](https://github.com/omarroth/doubletake/issues/26);
-the `code` config key is already plumbed for when it lands.
+**Some Apple TVs reject the mirroring stream with `HTTP 401`.** Discovery,
+pairing with the onscreen code, and credential persistence all succeed — then
+the mirroring SETUP is separately challenged for credentials doubletake 0.4.0
+cannot supply.
+
+Two different tvOS settings can cause this and the 401 alone does not
+distinguish them:
+
+- Settings → AirPlay and HomeKit → **Require Password** (a persistent 6+
+  character password)
+- Settings → AirPlay → Security → **Require Device Verification** (a 4-digit
+  onscreen code)
+
+Confirmed on an `AppleTV11,1` configured with an onscreen code and *no*
+password, so this is not only a password problem. Support is in flight upstream
+as [doubletake#26](https://github.com/omarroth/doubletake/issues/26); the `code`
+config key is plumbed for when it lands.
+
+To diagnose your own device, capture the challenge:
+
+```bash
+doubletake -target 192.168.1.231 -debug
+```
+
+The `WWW-Authenticate` header on the 401 says which scheme the receiver wants.
 
 **Casting to both protocols at once costs two encodes.** AirPlay capture is
 owned by doubletake and cannot be shared, so a simultaneous AirPlay + Chromecast

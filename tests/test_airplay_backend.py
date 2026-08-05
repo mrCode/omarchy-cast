@@ -148,10 +148,11 @@ async def test_connect_timeout_mentions_firewall():
     assert states[-1][0] is SessionState.FAILED
 
 
-async def test_password_protected_receiver_is_named_explicitly():
-    """A 401 means Require Password is on; upstream doubletake #26 covers it.
+async def test_401_names_both_settings_without_guessing():
+    """Observed on a real AppleTV11,1 AFTER onscreen-code pairing succeeded.
 
-    Verified against a real AppleTV11,1 that failed exactly this way.
+    Two tvOS settings can produce this and the response alone does not
+    distinguish them, so the message must name both rather than assert one.
     """
     runner = FakeRunner(
         results={
@@ -168,7 +169,9 @@ async def test_password_protected_receiver_is_named_explicitly():
         await backend.start(make_device())
     message = str(excinfo.value)
     assert "Require Password" in message
+    assert "Require Device Verification" in message
     assert "#26" in message
+    assert "-debug" in message
     assert states[-1][0] is SessionState.FAILED
 
 

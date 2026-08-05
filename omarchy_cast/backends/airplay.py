@@ -118,15 +118,23 @@ class AirPlayBackend(Backend):
         self._daemon_started = True
 
     def _explain(self, device: Device, detail: str) -> str:
-        # A 401 means the receiver has Require Password enabled. doubletake
-        # 0.4.0 cannot answer the HTTP Digest challenge (upstream issue #26).
+        # A 401 on SETUP means the receiver challenged the mirroring stream for
+        # credentials doubletake 0.4.0 cannot supply. Observed on a real
+        # AppleTV11,1 *after* onscreen-code pairing had already succeeded, so
+        # this is not simply "you skipped pairing". Two distinct tvOS settings
+        # can produce it and we cannot tell them apart from the response alone,
+        # so name both rather than guess.
         if "401" in detail:
             return (
-                f"{device.name} has 'Require Password' enabled (Settings -> AirPlay "
-                f"and HomeKit on an Apple TV). doubletake cannot answer its "
-                f"authentication challenge yet -- see upstream issue #26. Either "
-                f"turn that setting off on the receiver, or wait for #26 to land "
-                f"and set code = \"...\" under [airplay] in your config."
+                f"{device.name} rejected the mirroring stream with HTTP 401 "
+                f"(authentication required). Pairing itself may have succeeded -- "
+                f"this challenge comes later. On an Apple TV check both "
+                f"Settings > AirPlay and HomeKit > Require Password (a persistent "
+                f"password) and Settings > AirPlay > Security > Require Device "
+                f"Verification (an onscreen code). doubletake 0.4.0 cannot answer "
+                f"this challenge; support is in flight upstream as issue #26. "
+                f"Run 'doubletake -target {device.address} -debug' to capture the "
+                f"WWW-Authenticate header if you want to report it."
             )
         return (
             f"could not reach {device.name}. The receiver connects back to this "
