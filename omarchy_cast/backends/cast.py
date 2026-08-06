@@ -3,7 +3,6 @@ import logging
 import uuid as uuid_module
 
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
-from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.capture.encoder import (
     NoEncoderAvailable,
     probe_available,
@@ -14,7 +13,7 @@ from omarchy_cast.capture.pipeline import CapturePipeline, build_pipeline_descri
 from omarchy_cast.capture.portal import PortalError, open_screencast
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import SessionState
+from omarchy_cast.core.session import MIRROR, SessionState
 
 log = logging.getLogger(__name__)
 

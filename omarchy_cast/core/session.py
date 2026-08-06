@@ -1,8 +1,14 @@
 import time
 from enum import StrEnum
 
-from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.core.device import Device
+
+# Cast modes. They live here, next to the Session that carries one, rather than
+# in backends/creds.py: the core package must not have to import a backend
+# module to know what a mode is.
+MIRROR = "mirror"
+EXTEND = "extend"
+MODES = (MIRROR, EXTEND)
 
 
 class SessionState(StrEnum):

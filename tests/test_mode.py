@@ -3,11 +3,10 @@ import asyncio
 import pytest
 
 from omarchy_cast.backends.base import BackendError
-from omarchy_cast.backends.creds import EXTEND, MIRROR
 from omarchy_cast.backends.stub import StubBackend
 from omarchy_cast.core.daemon import Daemon
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import Session
+from omarchy_cast.core.session import EXTEND, MIRROR, Session
 
 
 class FakeDiscovery:

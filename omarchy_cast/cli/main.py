@@ -4,7 +4,7 @@ import json
 import subprocess
 import sys
 
-from omarchy_cast.backends.creds import EXTEND, MIRROR, MODES
+from omarchy_cast.core.session import EXTEND, MIRROR, MODES
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.cli.menu import (
     MANUAL_ENTRY,

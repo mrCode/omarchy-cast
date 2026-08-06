@@ -4,12 +4,11 @@ import pytest
 
 from omarchy_cast.backends import creds
 from omarchy_cast.backends.creds import (
-    EXTEND,
-    MIRROR,
     creds_path,
     ensure_extend_creds,
     extend_creds_path,
 )
+from omarchy_cast.core.session import EXTEND, MIRROR
 
 
 @pytest.fixture(autouse=True)

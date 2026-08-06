@@ -9,7 +9,6 @@ import time
 from collections.abc import Callable
 
 from omarchy_cast.backends.base import Backend, BackendError
-from omarchy_cast.backends.creds import MIRROR, MODES
 from omarchy_cast.core.device import PROTOCOLS, Device
 from omarchy_cast.core.protocol import (
     decode_line,
@@ -18,7 +17,13 @@ from omarchy_cast.core.protocol import (
     ok,
     socket_path,
 )
-from omarchy_cast.core.session import InvalidTransition, Session, SessionState
+from omarchy_cast.core.session import (
+    MIRROR,
+    MODES,
+    InvalidTransition,
+    Session,
+    SessionState,
+)
 
 log = logging.getLogger(__name__)
 

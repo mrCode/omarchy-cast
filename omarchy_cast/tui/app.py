@@ -21,7 +21,7 @@ from textual.widgets import (
     Static,
 )
 
-from omarchy_cast.backends.creds import EXTEND, MIRROR
+from omarchy_cast.core.session import EXTEND, MIRROR
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.tui.model import (
     STATE_STYLE,

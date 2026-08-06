@@ -2,10 +2,9 @@ import pytest
 
 from omarchy_cast.backends import airplay as airplay_mod
 from omarchy_cast.backends.airplay import AirPlayBackend
-from omarchy_cast.backends.creds import EXTEND, MIRROR
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import SessionState
+from omarchy_cast.core.session import EXTEND, MIRROR, SessionState
 
 from tests.test_airplay_backend import READY, FakeProc
 

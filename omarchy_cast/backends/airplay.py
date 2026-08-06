@@ -28,11 +28,11 @@ from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
-from omarchy_cast.backends.creds import EXTEND, MIRROR, creds_path
+from omarchy_cast.backends.creds import creds_path
 from omarchy_cast.core import display, virtual_display
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import SessionState
+from omarchy_cast.core.session import EXTEND, MIRROR, SessionState
 
 log = logging.getLogger(__name__)
 

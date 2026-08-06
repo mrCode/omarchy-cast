@@ -1,7 +1,6 @@
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
-from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import SessionState
+from omarchy_cast.core.session import MIRROR, SessionState
 
 
 class StubBackend(Backend):

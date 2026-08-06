@@ -1,9 +1,8 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
-from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import SessionState
+from omarchy_cast.core.session import MIRROR, SessionState
 
 StateCallback = Callable[[Device, SessionState, str | None], None]
 

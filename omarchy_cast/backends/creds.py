@@ -11,12 +11,9 @@ import logging
 from pathlib import Path
 
 from omarchy_cast.core.display import state_dir
+from omarchy_cast.core.session import EXTEND, MIRROR
 
 log = logging.getLogger(__name__)
-
-MIRROR = "mirror"
-EXTEND = "extend"
-MODES = (MIRROR, EXTEND)
 
 
 def default_creds_path() -> Path:

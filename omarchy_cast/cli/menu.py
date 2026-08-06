@@ -1,6 +1,6 @@
 import re
 
-from omarchy_cast.backends.creds import EXTEND, MIRROR
+from omarchy_cast.core.session import EXTEND, MIRROR
 
 LABELS = {"airplay": "AirPlay", "cast": "Chromecast"}
 
