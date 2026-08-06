@@ -173,6 +173,9 @@ class AirPlayBackend(Backend):
         # backend-scalar "the" virtual output or "the" switched display broke
         # as soon as mirror and extend could be active together.
         self._sessions: dict[str, _Session] = {}
+        # Serialises the whole guard-to-registration region of an extend start;
+        # see start(). Mirror starts never take it.
+        self._extend_lock = asyncio.Lock()
 
     # -- process construction --------------------------------------------
 
@@ -239,6 +242,27 @@ class AirPlayBackend(Backend):
     # -- lifecycle ---------------------------------------------------------
 
     async def start(self, device: Device, mode: str = MIRROR) -> None:
+        if mode == EXTEND:
+            # The guard reads self._sessions, but a session is registered only
+            # after `await self._spawn(...)`, and create_subprocess_exec yields
+            # several times. Two extends racing into that window both passed
+            # the guard, both ran the synchronous cleanup_strays() -- the
+            # second deleting the first's live output -- and both registered
+            # as "the" extend. The lock holds the reservation from the guard
+            # all the way to the registration, so the loser sees the winner.
+            async with self._extend_lock:
+                session = await self._launch(device, mode)
+        else:
+            session = await self._launch(device, mode)
+
+        # Deliberately outside the lock: this waits up to ready_timeout for the
+        # child, and holding the extend slot for 30s would stall a restart of
+        # the very session that owns it.
+        await self._await_ready(session, initial=True)
+
+    async def _launch(self, device: Device, mode: str) -> _Session:
+        """Guard, prepare the environment, spawn the child, register the
+        session -- everything that has to happen atomically for an extend."""
         # The guard runs first, before anything is torn down. It used to sit
         # after the teardown below, so a refused request had already killed the
         # requesting device's live mirror by the time it was told "already
@@ -302,8 +326,7 @@ class AirPlayBackend(Backend):
         session.switched_display = switched_display
         self._sessions[device.id] = session
         session.pump = asyncio.create_task(self._pump(session))
-
-        await self._await_ready(session, initial=True)
+        return session
 
     async def _await_ready(self, session: _Session, initial: bool) -> None:
         device = session.device

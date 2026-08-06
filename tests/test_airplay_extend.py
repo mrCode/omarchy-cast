@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from omarchy_cast.backends import airplay as airplay_mod
@@ -306,6 +308,47 @@ async def test_re_extending_the_same_device_is_not_rejected(fakes):
     await backend.start(device, EXTEND)
     await backend.start(device, EXTEND)
     assert states[-1][0] is SessionState.STREAMING
+    await backend.shutdown()
+
+
+# -- fix round 2: the guard must survive a race (Finding 4) --
+
+
+async def test_two_extends_racing_produce_exactly_one_session(fakes):
+    """The guard reads self._sessions, but a session is registered only after
+    `await self._spawn(...)`, and create_subprocess_exec yields several times.
+    A second extend landing in that window passed the guard too: both sessions
+    claimed the one virtual output, only one output existed, and stopping
+    either removed it from under the other -- which stayed registered and kept
+    reporting STREAMING.
+    """
+    procs = [FakeProc([READY + b"\n"]), FakeProc([READY + b"\n"])]
+    states = []
+
+    async def spawner(argv, env):
+        # A real spawn suspends here; the fake has to as well or the race the
+        # guard has to survive cannot be expressed.
+        await asyncio.sleep(0)
+        return procs.pop(0)
+
+    backend = AirPlayBackend(
+        lambda d, s, e: states.append((s, e)),
+        Config(airplay_auto_resolution=True), spawner=spawner, ready_timeout=1.0,
+    )
+
+    results = await asyncio.gather(
+        backend.start(make_device(), EXTEND),
+        backend.start(make_device_b(), EXTEND),
+        return_exceptions=True,
+    )
+
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert len(failures) == 1, f"expected exactly one refusal, got {results}"
+    assert "already extending" in str(failures[0])
+    assert len(backend._sessions) == 1
+    # One winner means one virtual output was ever created.
+    assert fakes.count("create") == 1
+
     await backend.shutdown()
 
 
