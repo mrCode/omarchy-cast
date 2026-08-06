@@ -160,6 +160,25 @@ Credentials are saved by doubletake, so this is a one-time step per device.
 
 ## Firewall
 
+**Discovery finds nothing without this.** mDNS is a conversation: omarchy-cast
+asks, and receivers answer on UDP 5353. With a default-DROP firewall the query
+leaves and every reply is discarded, so `list` reports no receivers while the
+Apple TV sits there perfectly reachable. Nothing surfaces an error, because the
+packets are dropped by the kernel before anything sees them.
+
+```bash
+sudo ufw allow proto udp from 192.168.1.0/24 to any port 5353
+```
+
+`avahi-browse` can still find receivers when omarchy-cast cannot, which makes
+this look like an application bug. It is not: `avahi-daemon` reads the multicast
+stream, while omarchy-cast requests unicast replies, and those are exactly what
+a deny-incoming rule drops. Confirm with:
+
+```bash
+sudo journalctl -k | grep 'UFW BLOCK' | grep 5353
+```
+
 **AirPlay will hang forever without this.** The receiver connects *back* to your
 machine, so inbound traffic on the configured port range must be allowed. With a
 default-DROP firewall, the connection stalls silently with no error.

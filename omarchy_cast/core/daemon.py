@@ -29,6 +29,12 @@ log = logging.getLogger(__name__)
 
 DEFAULT_PORTS = {"airplay": 7000, "cast": 8009}
 
+# How long `list` will wait for a just-started mDNS browser to hear its first
+# reply. Receivers on a healthy network answer well inside this; the ceiling is
+# what a user waits at the keybind before the menu opens, so it stays short.
+DISCOVERY_GRACE = 3.0
+DISCOVERY_POLL = 0.1
+
 # The Cast backend has never been exercised against real hardware -- it is
 # covered only by unit tests against fakes. Say so at the point of use rather
 # than only in the README, so nobody debugs it thinking it is known-good.
@@ -69,6 +75,10 @@ class Daemon:
         self._notify = notifier or desktop_notify
         self._last_active = time.monotonic()
         self._stopping = asyncio.Event()
+        # Overwritten when discovery actually starts; until then every list is
+        # inside the grace window, which is the correct answer for a daemon
+        # that has not begun looking yet.
+        self._discovery_started_at = time.monotonic()
 
     # -- state callback given to backends ------------------------------
 
@@ -140,6 +150,24 @@ class Daemon:
             return err(str(exc))
 
     async def _cmd_list(self, request: dict) -> dict:
+        """Answer with the devices known so far, giving a cold start a moment.
+
+        mDNS is a conversation, not a lookup: the browser has to send a query
+        and wait for receivers to answer, which takes a second or two. The
+        daemon exits after 30s idle, so almost every `list` -- and therefore
+        almost every press of the cast keybind -- spawns a fresh daemon and
+        asks it immediately. Answering honestly-but-uselessly with an empty
+        list made the app look like it could not see a receiver that was
+        sitting right there, and sent the user hunting through firewall rules.
+
+        The wait applies only while the browser is still young AND nothing has
+        been found yet, so a genuinely empty network still answers promptly
+        once the grace period is behind it, and a warm daemon never waits.
+        """
+        deadline = self._discovery_started_at + DISCOVERY_GRACE
+        while not self.discovery.devices() and time.monotonic() < deadline:
+            await asyncio.sleep(DISCOVERY_POLL)
+
         return ok({"devices": [_device_dict(d) for d in self.discovery.devices()]})
 
     async def _cmd_status(self, request: dict) -> dict:
@@ -346,6 +374,7 @@ class Daemon:
                 loop.add_signal_handler(sig, self._on_signal, sig)
 
         self.discovery.start()
+        self._discovery_started_at = time.monotonic()
         server = await asyncio.start_unix_server(self._on_client, path=str(path))
         os.chmod(path, 0o600)
         watchdog = asyncio.create_task(self._idle_watchdog())

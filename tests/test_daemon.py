@@ -1,6 +1,8 @@
+import time
 import pytest
 
 from omarchy_cast.backends.stub import StubBackend
+from omarchy_cast.core import daemon as daemon_mod
 from omarchy_cast.core.daemon import Daemon
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import SessionState
@@ -232,3 +234,92 @@ async def test_serve_installs_signal_handlers(tmp_path):
     daemon._on_signal(signal.SIGTERM)
     await asyncio.wait_for(task, timeout=5)
     assert not sock.exists(), "socket should be removed on shutdown"
+
+
+# -- list waits for a cold mDNS browser -------------------------------------
+
+
+class SlowDiscovery:
+    """Finds a device only after `appear_after` calls to devices(), modelling
+    mDNS taking a moment to hear back rather than failing."""
+
+    def __init__(self, device, appear_after):
+        self._device = device
+        self._appear_after = appear_after
+        self.calls = 0
+
+    def devices(self):
+        self.calls += 1
+        return [self._device] if self.calls > self._appear_after else []
+
+    def add(self, device):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+def _cast_device():
+    return Device(
+        id="cast:1", name="TV", address="192.168.1.5", port=8009, protocol="cast"
+    )
+
+
+async def test_list_waits_for_a_cold_discovery_to_find_something():
+    """The daemon exits after 30s idle, so nearly every `list` -- and so nearly
+    every press of the cast keybind -- hits a browser that has not heard back
+    yet. Answering instantly reported an empty network with a receiver sitting
+    right there."""
+    discovery = SlowDiscovery(_cast_device(), appear_after=3)
+    daemon = Daemon(discovery, {}, notifier=lambda m: None)
+    daemon._discovery_started_at = time.monotonic()
+
+    resp = await daemon.handle({"cmd": "list"})
+
+    assert [d["id"] for d in resp["data"]["devices"]] == ["cast:1"]
+
+
+async def test_list_does_not_wait_once_something_is_known():
+    """A warm daemon must stay instant -- the wait is for a cold start only."""
+    discovery = SlowDiscovery(_cast_device(), appear_after=0)
+    daemon = Daemon(discovery, {}, notifier=lambda m: None)
+    daemon._discovery_started_at = time.monotonic()
+
+    started = time.monotonic()
+    resp = await daemon.handle({"cmd": "list"})
+
+    assert len(resp["data"]["devices"]) == 1
+    assert time.monotonic() - started < 0.1
+
+
+async def test_list_gives_up_once_the_grace_period_has_passed():
+    """A genuinely empty network must not pay the wait on every later call."""
+    discovery = SlowDiscovery(_cast_device(), appear_after=10_000)
+    daemon = Daemon(discovery, {}, notifier=lambda m: None)
+    daemon._discovery_started_at = time.monotonic() - (daemon_mod.DISCOVERY_GRACE + 1)
+
+    started = time.monotonic()
+    resp = await daemon.handle({"cmd": "list"})
+
+    assert resp["data"]["devices"] == []
+    assert time.monotonic() - started < 0.1
+
+
+async def test_list_stops_waiting_at_the_grace_ceiling():
+    """It must bound the wait, not block the keybind indefinitely."""
+    discovery = SlowDiscovery(_cast_device(), appear_after=10_000)
+    daemon = Daemon(discovery, {}, notifier=lambda m: None)
+    monkeypatched_grace = 0.3
+    daemon._discovery_started_at = (
+        time.monotonic() - daemon_mod.DISCOVERY_GRACE + monkeypatched_grace
+    )
+
+    started = time.monotonic()
+    resp = await daemon.handle({"cmd": "list"})
+    waited = time.monotonic() - started
+
+    assert resp["data"]["devices"] == []
+    assert monkeypatched_grace - 0.15 < waited < monkeypatched_grace + 0.3

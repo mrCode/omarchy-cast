@@ -168,9 +168,32 @@ def _run_menu() -> int:
     return 0
 
 
+# "no receivers found" is true but useless: it names the symptom and leaves the
+# user to guess between an asleep receiver, a firewall, and an access point that
+# will not forward multicast. The firewall case is the cruel one -- the query
+# goes out fine and the reply is dropped, so nothing anywhere reports an error.
+NOTHING_FOUND = """no receivers found
+
+mDNS discovery found nothing. Worth checking, in this order:
+
+  - The receiver is asleep. An Apple TV stops answering when it is off.
+  - Inbound UDP 5353 is blocked. With a default-deny firewall the query leaves
+    and the reply is dropped, so everything looks silent:
+        sudo ufw allow proto udp from 192.168.0.0/16 to any port 5353
+    Use your own subnet. Confirm drops with:
+        sudo journalctl -k | grep 'UFW BLOCK' | grep 5353
+  - The access point does not forward multicast between clients -- common on
+    guest and corporate wifi, and not fixable from this machine.
+
+A receiver can be perfectly reachable and still invisible here, so you can
+always connect by address:
+
+    omarchy-cast start --address 192.168.1.231"""
+
+
 def _print_devices(devices: list[dict]) -> None:
     if not devices:
-        print("no receivers found")
+        print(NOTHING_FOUND)
         return
     for d in devices:
         model = f" ({d['model']})" if d.get("model") else ""
