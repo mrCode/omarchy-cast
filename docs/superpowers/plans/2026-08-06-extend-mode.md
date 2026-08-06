@@ -325,7 +325,7 @@ git commit -m "feat: add Hyprland virtual output management"
   - `MIRROR = "mirror"`, `EXTEND = "extend"`, `MODES = (MIRROR, EXTEND)`
   - `default_creds_path() -> Path` — doubletake's own file
   - `extend_creds_path() -> Path`
-  - `ensure_extend_creds() -> Path | None` — copies the mirror file minus `restore_token`
+  - `ensure_extend_creds() -> Path` — copies the mirror file minus `restore_token`
   - `creds_path(mode: str) -> Path | None` — None means "use doubletake's default"
 
 - [ ] **Step 1: Write the failing test**
