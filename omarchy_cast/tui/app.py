@@ -183,15 +183,15 @@ class CastApp(App):
         self._start_in_mode(EXTEND)
 
     def action_start(self) -> None:
+        self._start_in_mode(MIRROR)
+
+    def _start_in_mode(self, mode: str) -> None:
         """Synchronous on purpose.
 
         The guard must be set before any await, otherwise several rapid Enter
         presses all dispatch workers before the first marks us busy -- which is
         exactly how five stacked casts and a looping display happened.
         """
-        self._start_in_mode(MIRROR)
-
-    def _start_in_mode(self, mode: str) -> None:
         if self._busy:
             return
         row = self._selected()
@@ -202,9 +202,15 @@ class CastApp(App):
             return
 
         self._busy = True
-        self._set_summary(
-            f"{mode}ing to {row['name']} (this takes a few seconds)...", "connecting"
-        )
+        if mode == EXTEND:
+            # The summary is the only feedback a TUI user gets before the cast
+            # is up, so the portal-picker warning has to live here: choosing
+            # the wrong output silently mirrors instead of extending, and that
+            # choice then repeats on every subsequent extend.
+            summary = f"Extending to {row['name']} -- pick 'omarchy-cast' if the portal asks"
+        else:
+            summary = f"Mirroring to {row['name']} (this takes a few seconds)..."
+        self._set_summary(summary, "connecting")
         self._start_worker(row["id"], mode)
 
     @work(exclusive=True, group="control")

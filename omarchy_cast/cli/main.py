@@ -90,6 +90,10 @@ def _prompt_for_address() -> str:
     return _walker([], "Receiver IP address").strip()
 
 
+def _prompt_mode() -> str | None:
+    return parse_mode(_walker(list(MODE_ENTRIES), "Mirror or extend?"))
+
+
 def _run_menu() -> int:
     response = asyncio.run(request("list"))
     if not response.get("ok"):
@@ -118,6 +122,12 @@ def _run_menu() -> int:
         address = _prompt_for_address()
         if not address:
             return 0
+        # Mode is asked before "add" registers anything, so cancelling here
+        # leaves no orphaned device behind (see the other branch, which has
+        # nothing to register in the first place).
+        mode = _prompt_mode()
+        if mode is None:
+            return 0
         added = asyncio.run(request("add", address=address, protocol="airplay"))
         if not added.get("ok"):
             message = added.get("error", "unknown error")
@@ -128,24 +138,30 @@ def _run_menu() -> int:
         device_id = parse_selection(selection)
         if device_id is None:
             return 0
-
-    mode = parse_mode(_walker(list(MODE_ENTRIES), "Mirror or extend?"))
-    if mode is None:
-        return 0
+        mode = _prompt_mode()
+        if mode is None:
+            return 0
 
     result = asyncio.run(request("start", device_id=device_id, mode=mode))
     if not result.get("ok"):
         message = result.get("error", "unknown error")
         _notify(message, urgent=True)
         return _fail(message)
+
     warning = (result.get("data") or {}).get("warning")
-    if warning:
-        _notify(warning)
-    elif mode == EXTEND:
-        _notify(
+    if mode == EXTEND:
+        # The warning (e.g. Chromecast is untested) must not swallow this:
+        # picking the wrong output at the portal prompt silently mirrors
+        # instead of extending, and that choice then repeats on every cast.
+        # Both messages have to reach the user, so compose one notification
+        # rather than let one replace the other.
+        hint = (
             "Extending — if the portal asks, share the 'omarchy-cast' output. "
             "Right-click the waybar icon to stop."
         )
+        _notify(f"{warning}\n{hint}" if warning else hint)
+    elif warning:
+        _notify(warning)
     else:
         # The tooltip carries the same hint, but only on hover.
         _notify("Casting started — right-click the waybar icon to stop")
