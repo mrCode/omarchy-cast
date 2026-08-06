@@ -146,7 +146,7 @@ returns its workspace to the laptop.
 | Virtual output creation fails | Session fails; no output left behind |
 | Stray virtual output after a crash | `cleanup_strays()` at daemon start |
 | Windows present when the output is removed | Hyprland reparents them; verified |
-| Extend to two devices at once | One shared virtual output, refcounted; removed with the last session |
+| Extend to two devices at once | Rejected with a clear "already extending to <device>" error. One extend at a time; mirroring to several receivers at once is unaffected. Refcounted sharing was considered and dropped as unnecessary complexity for a single-laptop use case. |
 | Restore token references a deleted output | Portal re-prompts, which is correct |
 
 ### The most likely real failure
