@@ -28,8 +28,8 @@ from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
-from omarchy_cast.backends.creds import MIRROR
-from omarchy_cast.core import display
+from omarchy_cast.backends.creds import EXTEND, MIRROR, creds_path
+from omarchy_cast.core import display, virtual_display
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import SessionState
@@ -163,10 +163,12 @@ class AirPlayBackend(Backend):
         self._spawn = spawner or subprocess_spawner
         self._ready_timeout = ready_timeout
         self._sessions: dict[str, _Session] = {}
+        # Name of the virtual output while an extend session is running.
+        self._virtual: str | None = None
 
     # -- process construction --------------------------------------------
 
-    def build_argv(self, device: Device) -> list[str]:
+    def build_argv(self, device: Device, mode: str = MIRROR) -> list[str]:
         argv = [
             BIN,
             "-target", device.address,
@@ -176,6 +178,11 @@ class AirPlayBackend(Backend):
         ]
         if self._config.airplay_bitrate:
             argv += ["-bitrate", str(self._config.airplay_bitrate)]
+
+        # Each mode keeps its own portal restore token, i.e. its own output.
+        path = creds_path(mode)
+        if path is not None:
+            argv += ["-creds", str(path)]
         return argv
 
     def shim_dir(self) -> Path:
@@ -227,13 +234,24 @@ class AirPlayBackend(Backend):
         await self._teardown(device.id)
         self._emit(device, SessionState.CONNECTING)
 
-        # Must happen before doubletake captures: the receiver rejects a stream
-        # whose SPS does not match the negotiated 1920x1080.
-        if self._config.airplay_auto_resolution:
+        if mode == EXTEND:
+            virtual_display.cleanup_strays()
+            name = virtual_display.create()
+            if name is None:
+                message = (
+                    "could not create a virtual display for extend mode; "
+                    "is this Hyprland with hyprctl available?"
+                )
+                self._emit(device, SessionState.FAILED, message)
+                raise BackendError(message)
+            self._virtual = name
+        elif self._config.airplay_auto_resolution:
+            # Mirror only: the receiver rejects a stream whose SPS does not
+            # match the negotiated 1920x1080. A virtual output is already 1080p.
             display.apply_stream_mode()
 
         try:
-            proc = await self._spawn(self.build_argv(device), self.daemon_env())
+            proc = await self._spawn(self.build_argv(device, mode), self.daemon_env())
         except FileNotFoundError as exc:
             message = f"{BIN} is not installed; install it with: yay -S doubletake"
             self._emit(device, SessionState.FAILED, message)
@@ -327,7 +345,7 @@ class AirPlayBackend(Backend):
             # _await_ready owns the outcome.
             if session.streaming and not session.stopping:
                 self._sessions.pop(session.device.id, None)
-                self._restore_display()
+                self._restore_environment()
                 self._emit(
                     session.device,
                     SessionState.FAILED,
@@ -339,14 +357,19 @@ class AirPlayBackend(Backend):
         await self._teardown(session.device.id)
         self._emit(session.device, SessionState.FAILED, message)
 
-    def _restore_display(self) -> None:
-        if self._config.airplay_auto_resolution and not self._sessions:
+    def _restore_environment(self) -> None:
+        if self._sessions:
+            return
+        if self._virtual is not None:
+            virtual_display.remove(self._virtual)
+            self._virtual = None
+        elif self._config.airplay_auto_resolution:
             display.restore_mode()
 
     async def _teardown(self, device_id: str) -> None:
         session = self._sessions.pop(device_id, None)
         if session is None:
-            self._restore_display()
+            self._restore_environment()
             return
         session.stopping = True
         session.proc.terminate()
@@ -358,4 +381,4 @@ class AirPlayBackend(Backend):
                 await asyncio.wait_for(asyncio.shield(session.pump), timeout=2.0)
             except (asyncio.CancelledError, TimeoutError, Exception):
                 pass
-        self._restore_display()
+        self._restore_environment()
