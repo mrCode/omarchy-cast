@@ -21,6 +21,7 @@ from textual.widgets import (
     Static,
 )
 
+from omarchy_cast.core.session import EXTEND, MIRROR
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.tui.model import (
     STATE_STYLE,
@@ -85,6 +86,7 @@ class CastApp(App):
 
     BINDINGS = [
         Binding("enter", "start", "Start", priority=True),
+        Binding("e", "extend", "Extend"),
         Binding("s", "stop", "Stop"),
         Binding("a", "add", "Add by address"),
         Binding("r", "refresh", "Refresh"),
@@ -177,7 +179,13 @@ class CastApp(App):
 
     # -- actions ---------------------------------------------------------
 
+    def action_extend(self) -> None:
+        self._start_in_mode(EXTEND)
+
     def action_start(self) -> None:
+        self._start_in_mode(MIRROR)
+
+    def _start_in_mode(self, mode: str) -> None:
         """Synchronous on purpose.
 
         The guard must be set before any await, otherwise several rapid Enter
@@ -194,15 +202,21 @@ class CastApp(App):
             return
 
         self._busy = True
-        self._set_summary(
-            f"connecting to {row['name']} (this takes a few seconds)...", "connecting"
-        )
-        self._start_worker(row["id"])
+        if mode == EXTEND:
+            # The summary is the only feedback a TUI user gets before the cast
+            # is up, so the portal-picker warning has to live here: choosing
+            # the wrong output silently mirrors instead of extending, and that
+            # choice then repeats on every subsequent extend.
+            summary = f"Extending to {row['name']} -- pick 'omarchy-cast' if the portal asks"
+        else:
+            summary = f"Mirroring to {row['name']} (this takes a few seconds)..."
+        self._set_summary(summary, "connecting")
+        self._start_worker(row["id"], mode)
 
     @work(exclusive=True, group="control")
-    async def _start_worker(self, device_id: str) -> None:
+    async def _start_worker(self, device_id: str, mode: str = MIRROR) -> None:
         try:
-            await self._send("start", device_id=device_id)
+            await self._send("start", device_id=device_id, mode=mode)
         finally:
             self._busy = False
 

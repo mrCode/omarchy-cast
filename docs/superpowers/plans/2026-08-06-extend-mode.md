@@ -261,7 +261,15 @@ def create(runner=_run) -> str | None:
             "on every cast", VIRTUAL_NAME, name,
         )
 
-    runner(["hyprctl", "keyword", "monitor", CONFIG.format(name=name)])
+    # Checked: a failed geometry call leaves the output at Hyprland's default
+    # scale 2.0 -- a logical 960x540 -- and returning success there would hand
+    # the caller a quarter-size display with no signal anything went wrong.
+    code, _ = runner(["hyprctl", "keyword", "monitor", CONFIG.format(name=name)])
+    if code != 0:
+        log.warning("could not configure %s; removing the half-created output", name)
+        remove(name, runner)
+        return None
+
     log.info("created virtual output %s at %s", name, MODE_LINE)
     return name
 
@@ -317,7 +325,7 @@ git commit -m "feat: add Hyprland virtual output management"
   - `MIRROR = "mirror"`, `EXTEND = "extend"`, `MODES = (MIRROR, EXTEND)`
   - `default_creds_path() -> Path` — doubletake's own file
   - `extend_creds_path() -> Path`
-  - `ensure_extend_creds() -> Path | None` — copies the mirror file minus `restore_token`
+  - `ensure_extend_creds() -> Path` — copies the mirror file minus `restore_token`
   - `creds_path(mode: str) -> Path | None` — None means "use doubletake's default"
 
 - [ ] **Step 1: Write the failing test**

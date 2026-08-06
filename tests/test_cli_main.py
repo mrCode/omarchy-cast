@@ -42,7 +42,7 @@ def test_start_passes_device_id(fake_request):
     calls, responses = fake_request
     responses["start"] = {"ok": True, "data": {"state": "streaming"}}
     assert cli_main.main(["start", "cast:1"]) == 0
-    assert calls[0] == ("start", {"device_id": "cast:1"})
+    assert calls[0] == ("start", {"device_id": "cast:1", "mode": "mirror"})
 
 
 def test_error_response_returns_nonzero_and_prints_to_stderr(fake_request, capsys):
@@ -84,7 +84,7 @@ def test_start_by_address_registers_then_starts(fake_request):
     assert cli_main.main(["start", "--address", "192.168.1.231"]) == 0
     assert calls[0][0] == "add"
     assert calls[0][1]["address"] == "192.168.1.231"
-    assert calls[1] == ("start", {"device_id": "airplay:192.168.1.231"})
+    assert calls[1] == ("start", {"device_id": "airplay:192.168.1.231", "mode": "mirror"})
 
 
 def test_start_by_address_honours_protocol(fake_request):
@@ -118,3 +118,98 @@ def test_daemon_unavailable_returns_two(fake_request, capsys, monkeypatch):
     monkeypatch.setattr(cli_main, "request", _boom)
     assert cli_main.main(["list"]) == 2
     assert "no daemon socket" in capsys.readouterr().err
+
+
+# -- _run_menu: mode prompt, notifications --------------------------------
+
+
+@pytest.fixture
+def fake_menu(monkeypatch):
+    """Stubs the three things _run_menu shells out to: the daemon socket,
+    walker, and notify-send -- none of which exist in the test environment.
+    """
+    responses = {}
+    walker_answers = {}
+    notifications = []
+
+    async def _request(cmd, path=None, **kwargs):
+        return responses[cmd]
+
+    def _walker(entries, prompt):
+        return walker_answers.get(prompt, "")
+
+    def _notify(message, urgent=False):
+        notifications.append(message)
+
+    monkeypatch.setattr(cli_main, "request", _request)
+    monkeypatch.setattr(cli_main, "_walker", _walker)
+    monkeypatch.setattr(cli_main, "_notify", _notify)
+    return responses, walker_answers, notifications
+
+
+def test_extend_notification_includes_warning_and_portal_hint(fake_menu):
+    """The Chromecast-untested warning is sent on every cast-protocol start,
+    mirror or extend -- it must not silently replace the extend hint that
+    names the portal output to pick.
+    """
+    responses, walker_answers, notifications = fake_menu
+    responses["list"] = {
+        "ok": True,
+        "data": {"devices": [{"id": "cast:1", "name": "Living Room", "protocol": "cast"}]},
+    }
+    responses["status"] = {"ok": True, "data": {"sessions": []}}
+    responses["start"] = {
+        "ok": True,
+        "data": {"state": "streaming", "warning": "Chromecast support is UNTESTED"},
+    }
+    walker_answers["Cast to"] = "Living Room (Chromecast) [cast:1]"
+    walker_answers["Mirror or extend?"] = (
+        "Extend — second display (pick 'omarchy-cast' if the portal asks)"
+    )
+
+    assert cli_main._run_menu() == 0
+    assert len(notifications) == 1
+    assert "UNTESTED" in notifications[0]
+    assert "omarchy-cast" in notifications[0]
+
+
+def test_mirror_notification_shows_warning_alone(fake_menu):
+    """Sanity check the other side of the same branch: mirror has no portal
+    hint to compose in, so the warning alone is still delivered."""
+    responses, walker_answers, notifications = fake_menu
+    responses["list"] = {
+        "ok": True,
+        "data": {"devices": [{"id": "cast:1", "name": "Living Room", "protocol": "cast"}]},
+    }
+    responses["status"] = {"ok": True, "data": {"sessions": []}}
+    responses["start"] = {
+        "ok": True,
+        "data": {"state": "streaming", "warning": "Chromecast support is UNTESTED"},
+    }
+    walker_answers["Cast to"] = "Living Room (Chromecast) [cast:1]"
+    walker_answers["Mirror or extend?"] = "Mirror — show this screen on the receiver"
+
+    assert cli_main._run_menu() == 0
+    assert notifications == ["Chromecast support is UNTESTED"]
+
+
+def test_manual_entry_skips_add_when_mode_prompt_cancelled(fake_menu, monkeypatch):
+    """Mode is now asked before the device is registered, so cancelling the
+    mode prompt during manual entry must not leave an orphaned device."""
+    responses, walker_answers, notifications = fake_menu
+    responses["list"] = {"ok": True, "data": {"devices": []}}
+    responses["status"] = {"ok": True, "data": {"sessions": []}}
+    add_calls = []
+
+    async def _request(cmd, path=None, **kwargs):
+        if cmd == "add":
+            add_calls.append(kwargs)
+        return responses[cmd]
+
+    monkeypatch.setattr(cli_main, "request", _request)
+    walker_answers["Cast to"] = cli_main.MANUAL_ENTRY
+    walker_answers["Receiver IP address"] = "10.0.0.5"
+    walker_answers["Mirror or extend?"] = ""  # cancelled
+
+    assert cli_main._run_menu() == 0
+    assert add_calls == []

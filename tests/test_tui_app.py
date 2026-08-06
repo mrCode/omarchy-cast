@@ -175,3 +175,29 @@ async def test_refresh_and_control_are_in_different_worker_groups():
     src = inspect.getsource(tui_app)
     assert 'group="refresh"' in src
     assert 'group="control"' in src
+
+
+async def test_extend_summary_names_the_output_to_pick(fake_daemon):
+    """Extend has no walker menu to lean on for the portal-picker warning --
+    the busy summary is the only place a TUI user will see it."""
+    calls, state = fake_daemon
+    state["start_delay"] = 0.5
+    app = tui_app.CastApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#devices").focus()
+        await pilot.press("e")
+        assert "omarchy-cast" in str(app.query_one("#summary").content)
+        starts = [c for c in calls if c[0] == "start"]
+        assert starts and starts[0][1]["mode"] == "extend"
+
+
+async def test_mirror_summary_does_not_mention_the_output(fake_daemon):
+    calls, state = fake_daemon
+    state["start_delay"] = 0.5
+    app = tui_app.CastApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.query_one("#devices").focus()
+        await pilot.press("enter")
+        assert "omarchy-cast" not in str(app.query_one("#summary").content)

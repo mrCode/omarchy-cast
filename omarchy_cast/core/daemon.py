@@ -3,13 +3,13 @@ import contextlib
 import logging
 import os
 import signal
-import subprocess
 import time
 
 from collections.abc import Callable
 
-from omarchy_cast.backends.base import Backend, BackendError
+from omarchy_cast.backends.base import Backend, BackendError, BackendRefused
 from omarchy_cast.core.device import PROTOCOLS, Device
+from omarchy_cast.core.notify import notify
 from omarchy_cast.core.protocol import (
     decode_line,
     encode_response,
@@ -17,7 +17,13 @@ from omarchy_cast.core.protocol import (
     ok,
     socket_path,
 )
-from omarchy_cast.core.session import InvalidTransition, Session, SessionState
+from omarchy_cast.core.session import (
+    MIRROR,
+    MODES,
+    InvalidTransition,
+    Session,
+    SessionState,
+)
 
 log = logging.getLogger(__name__)
 
@@ -34,14 +40,8 @@ CAST_UNTESTED = (
 
 
 def desktop_notify(message: str) -> None:
-    """Surface a failure via mako. Best effort; never raises."""
-    try:
-        subprocess.run(
-            ["notify-send", "-u", "critical", "omarchy-cast", message],
-            check=False,
-        )
-    except OSError:
-        log.debug("notify-send unavailable", exc_info=True)
+    """Surface a mid-stream crash. Urgent, because nobody is watching for it."""
+    notify(message, urgent=True)
 
 
 def _device_dict(d: Device) -> dict:
@@ -74,9 +74,16 @@ class Daemon:
 
     def on_state(self, device: Device, state: SessionState, error: str | None) -> None:
         session = self.sessions.get(device.id)
+        synthesized = session is None
         if session is None:
-            session = Session(device)
+            # _cmd_start registers the session (with its mode) before calling
+            # the backend, so reaching here means a stray emit for a device
+            # with no active start call -- e.g. a late crash emit after the
+            # session was already popped. Its mode is unknowable; default it.
+            session = Session(device, mode=MIRROR)
             self.sessions[device.id] = session
+
+        was_streaming = session.state is SessionState.STREAMING
 
         try:
             session.transition(state, error)
@@ -84,10 +91,20 @@ class Daemon:
             # Backends emit from background tasks (the AirPlay supervisor among
             # them). A late or duplicate emit must not take that task down.
             log.debug("ignoring %s -> %s for %s", session.state, state, device.id)
+            if synthesized:
+                # Nothing legal ever landed on it, so this session records no
+                # real cast. Leaving it would strand an entry that `status`
+                # hides (it is IDLE) but `stop` would still try to tear down.
+                self.sessions.pop(device.id, None)
             return
 
-        if state is SessionState.FAILED:
-            # waybar may be collapsed into the tray, so push it to the user too.
+        if state is SessionState.FAILED and was_streaming:
+            # Only a cast that DIED is announced here. A cast that never came
+            # up fails the `start` command too, and whichever client ran it
+            # reports that error itself -- notifying both produced two sticky
+            # banners for one failure. A mid-stream crash has no command to
+            # answer, so this is the only way the user learns the screen they
+            # are presenting from went dark.
             try:
                 self._notify(error or f"casting to {device.name} failed")
             except Exception:
@@ -126,15 +143,24 @@ class Daemon:
         return ok({"devices": [_device_dict(d) for d in self.discovery.devices()]})
 
     async def _cmd_status(self, request: dict) -> dict:
+        # IDLE is filtered out for the same reason _cmd_stop and _cmd_pin
+        # refuse it: _cmd_start registers the session before calling the
+        # backend, so an IDLE session is one whose backend has not emitted
+        # anything yet (AirPlay's pre-start teardown can sit there for 2s).
+        # Reporting it made waybar -- which has no idle branch and falls
+        # through to its streaming return -- show a green streaming indicator
+        # offering a Stop that _cmd_stop then refused.
         sessions = [
             {
                 "id": s.device.id,
                 "name": s.device.name,
                 "protocol": s.device.protocol,
                 "state": str(s.state),
+                "mode": s.mode,
                 "error": s.error,
             }
             for s in self.sessions.values()
+            if s.state is not SessionState.IDLE
         ]
         return ok({"sessions": sessions})
 
@@ -164,6 +190,10 @@ class Daemon:
 
     async def _cmd_start(self, request: dict) -> dict:
         device_id = request.get("device_id")
+        mode = request.get("mode", MIRROR)
+        if mode not in MODES:
+            return err(f"unknown mode: {mode}; expected one of {MODES}")
+
         device = self._find_device(device_id)
         if device is None:
             return err(f"device not found: {device_id}")
@@ -172,9 +202,40 @@ class Daemon:
         if backend is None:
             return err(f"no backend for protocol: {device.protocol}")
 
-        await backend.start(device)
+        # Register the session -- with its mode -- before calling the backend,
+        # rather than stashing the mode in shared daemon state. backend.start()
+        # can suspend before its first emit (AirPlay awaits a teardown that can
+        # take up to 2s), and the daemon serves clients concurrently, so a
+        # second in-flight start could otherwise overwrite a "pending mode"
+        # before the first device's session was ever created from it.
+        previous = self.sessions.get(device.id)
+        session = Session(device, mode=mode)
+        self.sessions[device.id] = session
+        try:
+            await backend.start(device, mode)
+        except BackendRefused:
+            # The backend declined without touching the device, so whatever it
+            # was already doing, it still is. The record displaced above is
+            # therefore still true and has to go back -- dropping it stranded a
+            # live session: waybar showed "not casting" and no stop could reach
+            # it. Restoring on *any* failure is wrong for the opposite reason:
+            # a failed restart tears the old cast down on its way in, and
+            # putting that record back claims a cast that is gone.
+            if self.sessions.get(device.id) is session:
+                self.sessions.pop(device.id, None)
+            if previous is not None and self.sessions.get(device.id) is None:
+                self.sessions[device.id] = previous
+            raise
+        except Exception:
+            # A start that raises without the backend ever reaching a terminal
+            # state (FAILED emits pop the session themselves) must not leave a
+            # never-transitioned session behind to block a retry.
+            if self.sessions.get(device.id) is session and session.state is SessionState.IDLE:
+                self.sessions.pop(device.id, None)
+            raise
+
         session = self.sessions.get(device.id)
-        data = {"state": str(session.state) if session else "idle"}
+        data = {"state": str(session.state) if session else "idle", "mode": mode}
         if device.protocol == "cast":
             data["warning"] = CAST_UNTESTED
             log.warning(CAST_UNTESTED)
@@ -182,23 +243,44 @@ class Daemon:
 
     async def _cmd_stop(self, request: dict) -> dict:
         device_id = request.get("device_id")
+        # A session in IDLE has been registered by _cmd_start but its backend
+        # has not emitted anything yet (e.g. AirPlay's pre-start teardown,
+        # which can take up to 2s). backend.stop() on it would be a no-op the
+        # backend doesn't recognise, and on_state would silently swallow the
+        # resulting illegal transitions -- so it must not count as stoppable.
         if device_id is None:
-            targets = list(self.sessions.values())
-        elif device_id in self.sessions:
+            targets = [
+                s for s in self.sessions.values() if s.state is not SessionState.IDLE
+            ]
+        elif device_id in self.sessions and self.sessions[device_id].state is not SessionState.IDLE:
             targets = [self.sessions[device_id]]
         else:
             return err(f"no active session for: {device_id}")
 
+        # Failures are collected rather than raised through: a backend that
+        # stopped the cast but could not fully clean up (AirPlay failing to
+        # remove its virtual output) must still be reported, but must not
+        # abandon the sessions queued behind it.
+        problems = []
         for session in targets:
             backend = self.backends.get(session.device.protocol)
-            if backend is not None:
+            if backend is None:
+                continue
+            try:
                 await backend.stop(session.device)
+            except BackendError as exc:
+                log.warning("stop for %s: %s", session.device.id, exc)
+                problems.append(str(exc))
+        if problems:
+            return err("; ".join(problems))
         return ok({"stopped": len(targets)})
 
     async def _cmd_pin(self, request: dict) -> dict:
         device_id = request.get("device_id")
         session = self.sessions.get(device_id)
-        if session is None:
+        # Same reasoning as _cmd_stop: an IDLE session has no backend-side
+        # counterpart yet, so there is nothing to submit a PIN to.
+        if session is None or session.state is SessionState.IDLE:
             return err(f"no pending session for: {device_id}")
         backend = self.backends[session.device.protocol]
         await backend.submit_pin(session.device, str(request.get("pin", "")))
@@ -314,9 +396,12 @@ def main() -> None:
     )
 
     # A previous run may have died mid-cast with the display still switched.
-    from omarchy_cast.core import display
+    from omarchy_cast.core import display, virtual_display
     if display.restore_mode():
         log.info("restored a display mode left over from a previous session")
+    strays = virtual_display.cleanup_strays()
+    if strays:
+        log.info("removed %d virtual output(s) left over from a previous session", strays)
 
     config = load_config()
     daemon = Daemon(Discovery(), {}, idle_timeout=args.idle_timeout)

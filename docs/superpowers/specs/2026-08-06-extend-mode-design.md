@@ -55,8 +55,11 @@ rather than discovering it. The implementation must diff the monitor list.
 - Moving windows onto the virtual output automatically.
 - Remembering a per-device mode preference.
 - Position or layout control beyond "auto, to the right of existing outputs".
-- Extend for Chromecast is implemented but **not claimed to work**: the Cast
-  backend has never run against real hardware.
+- Extend for Chromecast. Extend is **AirPlay-only**. The Cast path goes through
+  the Default Media Receiver, which buffers a media stream for 1-3 seconds by
+  design; a display that lags that far behind the cursor is not usable as a
+  second display, so there is nothing there worth shipping. `CastBackend`
+  rejects `extend` rather than accepting the mode and mirroring instead.
 
 ## Architecture
 
@@ -77,8 +80,15 @@ VIRTUAL_NAME = "omarchy-cast"
 available() -> bool                  # hyprctl present
 create(runner=...) -> str            # create, configure, return the ACTUAL name
 remove(name, runner=...) -> bool
-cleanup_strays(runner=...) -> int    # remove leftovers at daemon start
+cleanup_strays(runner=...) -> int    # remove OUR leftover, at daemon start
 ```
+
+`cleanup_strays()` removes `VIRTUAL_NAME` and nothing else. It deliberately
+does **not** sweep every `HEADLESS*` output: wayvnc and Sunshine create those,
+and this runs at daemon start and before every extend, so sweeping them
+destroyed live outputs omarchy-cast never created. The cost is that an output
+Hyprland renamed to `HEADLESS-N` is not swept up after a crash — recoverable,
+unlike deleting someone else's display.
 
 `create()` diffs the monitor list before and after, and returns the name it
 actually observes rather than the name it requested. Configuration is
@@ -116,9 +126,17 @@ failure, ready timeout, crash detection, daemon shutdown.
 
 ### Cast
 
-`CastBackend` gets the same mode parameter. Our own portal token is stored per
-mode, which is simpler than doubletake's case because we own the file. Shipped
-untested, consistent with how the Cast backend is already described.
+`CastBackend` takes the same `mode` parameter and **refuses `extend`**: it
+emits `FAILED` and raises `BackendError` with
+`extend is AirPlay-only; Chromecast buffers 1-3s and cannot serve as a second
+display`, matching how the AirPlay backend reports its own refusals.
+
+An earlier draft of this design had `CastBackend` accept the mode. It never
+used it: there was no virtual output on that path and the capture was of the
+real screen, so `--mode extend cast:1` produced a mirror while `status`,
+waybar and the menu all reported an extend and told the user to pick an
+`omarchy-cast` output that did not exist. Rejecting is the honest option, and
+the buffering makes the feature pointless there regardless.
 
 ## Data flow
 
@@ -146,7 +164,7 @@ returns its workspace to the laptop.
 | Virtual output creation fails | Session fails; no output left behind |
 | Stray virtual output after a crash | `cleanup_strays()` at daemon start |
 | Windows present when the output is removed | Hyprland reparents them; verified |
-| Extend to two devices at once | One shared virtual output, refcounted; removed with the last session |
+| Extend to two devices at once | Rejected with a clear "already extending to <device>" error. One extend at a time; mirroring to several receivers at once is unaffected. Refcounted sharing was considered and dropped as unnecessary complexity for a single-laptop use case. |
 | Restore token references a deleted output | Portal re-prompts, which is correct |
 
 ### The most likely real failure

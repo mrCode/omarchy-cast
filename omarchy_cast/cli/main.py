@@ -4,11 +4,15 @@ import json
 import subprocess
 import sys
 
+from omarchy_cast.core.notify import notify
+from omarchy_cast.core.session import EXTEND, MIRROR, MODES
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.cli.menu import (
     MANUAL_ENTRY,
+    MODE_ENTRIES,
     STOP_ENTRY,
     format_entries,
+    parse_mode,
     parse_selection,
 )
 from omarchy_cast.cli.waybar import render
@@ -33,6 +37,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="protocol to use with --address (default: airplay)",
     )
     start.add_argument("--name", help="display name for a device added by address")
+    start.add_argument(
+        "--mode",
+        default=MIRROR,
+        choices=MODES,
+        help="mirror the screen (default) or extend onto a virtual display",
+    )
 
     stop = sub.add_parser("stop", help="stop mirroring (all sessions if no device given)")
     stop.add_argument("device_id", nargs="?", default=None)
@@ -48,10 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _notify(message: str, urgent: bool = False) -> None:
-    argv = ["notify-send"]
-    if urgent:
-        argv += ["-u", "critical"]
-    subprocess.run([*argv, "omarchy-cast", message], check=False)
+    """Errors here are answers to a command the user just ran, so they are not
+    urgent -- the user is already looking. See core.notify for why that matters."""
+    notify(message, urgent=urgent)
 
 
 def _run_waybar() -> int:
@@ -81,6 +90,10 @@ def _prompt_for_address() -> str:
     return _walker([], "Receiver IP address").strip()
 
 
+def _prompt_mode() -> str | None:
+    return parse_mode(_walker(list(MODE_ENTRIES), "Mirror or extend?"))
+
+
 def _run_menu() -> int:
     response = asyncio.run(request("list"))
     if not response.get("ok"):
@@ -100,7 +113,7 @@ def _run_menu() -> int:
         result = asyncio.run(request("stop"))
         if not result.get("ok"):
             message = result.get("error", "unknown error")
-            _notify(message, urgent=True)
+            _notify(message)
             return _fail(message)
         _notify("Stopped casting")
         return 0
@@ -109,24 +122,45 @@ def _run_menu() -> int:
         address = _prompt_for_address()
         if not address:
             return 0
+        # Mode is asked before "add" registers anything, so cancelling here
+        # leaves no orphaned device behind (see the other branch, which has
+        # nothing to register in the first place).
+        mode = _prompt_mode()
+        if mode is None:
+            return 0
         added = asyncio.run(request("add", address=address, protocol="airplay"))
         if not added.get("ok"):
             message = added.get("error", "unknown error")
-            _notify(message, urgent=True)
+            _notify(message)
             return _fail(message)
         device_id = (added.get("data") or {})["device"]["id"]
     else:
         device_id = parse_selection(selection)
         if device_id is None:
             return 0
+        mode = _prompt_mode()
+        if mode is None:
+            return 0
 
-    result = asyncio.run(request("start", device_id=device_id))
+    result = asyncio.run(request("start", device_id=device_id, mode=mode))
     if not result.get("ok"):
         message = result.get("error", "unknown error")
-        _notify(message, urgent=True)
+        _notify(message)
         return _fail(message)
+
     warning = (result.get("data") or {}).get("warning")
-    if warning:
+    if mode == EXTEND:
+        # The warning (e.g. Chromecast is untested) must not swallow this:
+        # picking the wrong output at the portal prompt silently mirrors
+        # instead of extending, and that choice then repeats on every cast.
+        # Both messages have to reach the user, so compose one notification
+        # rather than let one replace the other.
+        hint = (
+            "Extending — if the portal asks, share the 'omarchy-cast' output. "
+            "Right-click the waybar icon to stop."
+        )
+        _notify(f"{warning}\n{hint}" if warning else hint)
+    elif warning:
         _notify(warning)
     else:
         # The tooltip carries the same hint, but only on hover.
@@ -190,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
                 device_id, code = _resolve_by_address(args)
                 if device_id is None:
                     return code
-            response = asyncio.run(request("start", device_id=device_id))
+            response = asyncio.run(request("start", device_id=device_id, mode=args.mode))
         elif args.command == "pin":
             response = asyncio.run(
                 request("pin", device_id=args.device_id, pin=args.pin)

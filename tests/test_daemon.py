@@ -99,6 +99,31 @@ async def test_stop_unknown_device_errors():
     assert "no active session" in resp["error"]
 
 
+async def test_stop_all_stops_every_session_even_when_one_reports_a_problem():
+    """A stop that could not finish -- e.g. AirPlay failing to remove the
+    virtual output -- must be reported, but must not abandon the sessions
+    queued behind it."""
+    from omarchy_cast.backends.base import BackendError
+
+    stopped = []
+
+    class ComplainingStop(StubBackend):
+        async def stop(self, device):
+            stopped.append(device.id)
+            await super().stop(device)
+            raise BackendError(f"could not remove the virtual output for {device.id}")
+
+    daemon = make_daemon(devices=[make_device("cast", "1"), make_device("cast", "2")])
+    daemon.backends["cast"] = ComplainingStop(daemon.on_state)
+    await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+    await daemon.handle({"cmd": "start", "device_id": "cast:2"})
+
+    resp = await daemon.handle({"cmd": "stop"})
+    assert resp["ok"] is False
+    assert "could not remove" in resp["error"]
+    assert sorted(stopped) == ["cast:1", "cast:2"]
+
+
 async def test_pin_flow_reaches_streaming():
     daemon = make_daemon(needs_pin=True)
     await daemon.handle({"cmd": "start", "device_id": "cast:1"})

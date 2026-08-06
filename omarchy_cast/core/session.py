@@ -3,6 +3,13 @@ from enum import StrEnum
 
 from omarchy_cast.core.device import Device
 
+# Cast modes. They live here, next to the Session that carries one, rather than
+# in backends/creds.py: the core package must not have to import a backend
+# module to know what a mode is.
+MIRROR = "mirror"
+EXTEND = "extend"
+MODES = (MIRROR, EXTEND)
+
 
 class SessionState(StrEnum):
     IDLE = "idle"
@@ -34,8 +41,9 @@ class InvalidTransition(Exception):
 
 
 class Session:
-    def __init__(self, device: Device) -> None:
+    def __init__(self, device: Device, mode: str = MIRROR) -> None:
         self.device = device
+        self.mode = mode
         self.state = SessionState.IDLE
         self.error: str | None = None
         self.started_at: float | None = None
