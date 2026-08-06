@@ -14,6 +14,25 @@ happened — including failures.
 | Apple TV 4K (2022, 3rd gen) | `AppleTV14,1` | ❓ Untested | Discovered and reachable during testing; not connected to. Listed as working upstream. |
 | LG webOS TV | `KWS85U02` | ❓ Untested | Advertises `_airplay._tcp`. Third-party AirPlay receivers are the flakier path. |
 
+## Extend mode
+
+Verified on the development machine against an `AppleTV11,1`, 2026-08-06.
+
+| Check | Result |
+|---|---|
+| Virtual output created | ✅ `omarchy-cast` at 1920×1080@60, scale 1 |
+| Laptop display untouched | ✅ `eDP-2` stayed 2560×1600@240 scale 1.6 throughout |
+| Receiver shows a *separate* desktop | ✅ confirmed visually — empty workspace, not a copy of the laptop |
+| Portal prompt on first extend | ✅ appeared once; `omarchy-cast` selected |
+| Second extend rejected | ✅ `already extending to Meeting Room; stop it first` |
+| First session survives the rejection | ✅ still streaming, its output not removed |
+| Session stability | ✅ 30 s continuous, `doubletake` and both pipelines alive |
+| Teardown | ✅ output removed, no stray processes, display never switched |
+
+Note: extend never writes `display-before-cast.json`, because it never changes
+the display — that file staying absent is the check that mirror's workaround is
+genuinely bypassed.
+
 ## Chromecast
 
 | Device | Model | Status | Notes |
