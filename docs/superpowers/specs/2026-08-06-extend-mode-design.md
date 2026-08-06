@@ -80,8 +80,15 @@ VIRTUAL_NAME = "omarchy-cast"
 available() -> bool                  # hyprctl present
 create(runner=...) -> str            # create, configure, return the ACTUAL name
 remove(name, runner=...) -> bool
-cleanup_strays(runner=...) -> int    # remove leftovers at daemon start
+cleanup_strays(runner=...) -> int    # remove OUR leftover, at daemon start
 ```
+
+`cleanup_strays()` removes `VIRTUAL_NAME` and nothing else. It deliberately
+does **not** sweep every `HEADLESS*` output: wayvnc and Sunshine create those,
+and this runs at daemon start and before every extend, so sweeping them
+destroyed live outputs omarchy-cast never created. The cost is that an output
+Hyprland renamed to `HEADLESS-N` is not swept up after a crash — recoverable,
+unlike deleting someone else's display.
 
 `create()` diffs the monitor list before and after, and returns the name it
 actually observes rather than the name it requested. Configuration is
