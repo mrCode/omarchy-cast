@@ -1,4 +1,5 @@
 from omarchy_cast.backends.stub import StubBackend
+from omarchy_cast.core import notify as core_notify
 from omarchy_cast.core.daemon import Daemon
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import SessionState
@@ -95,3 +96,49 @@ async def test_late_emit_after_failure_is_ignored_not_raised():
 
     assert daemon.sessions == {}
     assert sent == []
+
+
+# -- the notify-send invocation itself --------------------------------------
+#
+# Every daemon in this suite gets an injected notifier, so without these the
+# argv built by core.notify is never executed by any test. That argv IS the
+# fix for notification flooding: a typo in the hint string restores stacking
+# silently, with the suite still green.
+
+
+def _argv(monkeypatch, **kwargs):
+    seen = []
+    monkeypatch.setattr(
+        core_notify.subprocess, "run", lambda argv, **kw: seen.append(argv)
+    )
+    core_notify.notify("something happened", **kwargs)
+    return seen[0]
+
+
+def test_normal_notifications_replace_rather_than_stack(monkeypatch):
+    argv = _argv(monkeypatch)
+    assert "-h" in argv
+    hint = argv[argv.index("-h") + 1]
+    assert hint == "string:x-canonical-private-synchronous:omarchy-cast"
+
+
+def test_normal_notifications_expire_on_their_own(monkeypatch):
+    argv = _argv(monkeypatch)
+    assert argv[argv.index("-u") + 1] == "normal"
+    assert "-t" in argv and int(argv[argv.index("-t") + 1]) > 0
+
+
+def test_a_crash_is_critical_and_has_no_expiry(monkeypatch):
+    """Sticky is the point here: it is how the user learns the screen they are
+    presenting from went dark."""
+    argv = _argv(monkeypatch, urgent=True)
+    assert argv[argv.index("-u") + 1] == "critical"
+    assert "-t" not in argv
+
+
+def test_a_missing_notify_send_does_not_raise(monkeypatch):
+    def boom(*a, **kw):
+        raise FileNotFoundError("notify-send")
+
+    monkeypatch.setattr(core_notify.subprocess, "run", boom)
+    core_notify.notify("no notification daemon here")

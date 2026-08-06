@@ -27,7 +27,7 @@ import shutil
 from pathlib import Path
 from collections.abc import Awaitable, Callable
 
-from omarchy_cast.backends.base import Backend, BackendError, StateCallback
+from omarchy_cast.backends.base import Backend, BackendError, BackendRefused, StateCallback
 from omarchy_cast.backends.creds import creds_path
 from omarchy_cast.core import display, virtual_display
 from omarchy_cast.core.config import Config
@@ -284,7 +284,9 @@ class AirPlayBackend(Backend):
                     f"already extending to {existing.device.name}; stop it first"
                 )
                 self._emit(device, SessionState.FAILED, message)
-                raise BackendError(message)
+                # Refused before touching this device: any cast it already has is
+                # still running, so the daemon must keep its record.
+                raise BackendRefused(message)
 
         await self._teardown(device.id)
         self._emit(device, SessionState.CONNECTING)

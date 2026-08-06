@@ -14,6 +14,23 @@ class BackendError(Exception):
     """
 
 
+class BackendRefused(BackendError):
+    """Raised when a backend declines a start WITHOUT touching the device.
+
+    The distinction matters to the daemon and nowhere else. `_cmd_start`
+    displaces any existing session record before calling the backend, so on
+    failure it must decide whether that record is still true. It is true
+    exactly when the backend never got as far as the device: extend asked of a
+    Chromecast, or extend asked while another device holds the virtual output.
+    Those leave a running cast running.
+
+    Every other failure means the backend already tore the old session down on
+    its way in, so the displaced record describes something that no longer
+    exists. Restoring it indiscriminately left a green "streaming" indicator on
+    the bar for a cast that had just failed to restart.
+    """
+
+
 class Backend(ABC):
     """A transport for one protocol.
 

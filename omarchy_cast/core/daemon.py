@@ -7,7 +7,7 @@ import time
 
 from collections.abc import Callable
 
-from omarchy_cast.backends.base import Backend, BackendError
+from omarchy_cast.backends.base import Backend, BackendError, BackendRefused
 from omarchy_cast.core.device import PROTOCOLS, Device
 from omarchy_cast.core.notify import notify
 from omarchy_cast.core.protocol import (
@@ -213,20 +213,25 @@ class Daemon:
         self.sessions[device.id] = session
         try:
             await backend.start(device, mode)
+        except BackendRefused:
+            # The backend declined without touching the device, so whatever it
+            # was already doing, it still is. The record displaced above is
+            # therefore still true and has to go back -- dropping it stranded a
+            # live session: waybar showed "not casting" and no stop could reach
+            # it. Restoring on *any* failure is wrong for the opposite reason:
+            # a failed restart tears the old cast down on its way in, and
+            # putting that record back claims a cast that is gone.
+            if self.sessions.get(device.id) is session:
+                self.sessions.pop(device.id, None)
+            if previous is not None and self.sessions.get(device.id) is None:
+                self.sessions[device.id] = previous
+            raise
         except Exception:
             # A start that raises without the backend ever reaching a terminal
             # state (FAILED emits pop the session themselves) must not leave a
             # never-transitioned session behind to block a retry.
             if self.sessions.get(device.id) is session and session.state is SessionState.IDLE:
                 self.sessions.pop(device.id, None)
-            if self.sessions.get(device.id) is None and previous is not None:
-                # Some refusals happen before the backend touches this device at
-                # all -- extend rejected because another device already has the
-                # virtual output, or extend asked of a Chromecast. Those leave the
-                # device's existing cast running, so the record we displaced is
-                # still true and has to go back. Dropping it stranded a live
-                # session: waybar showed "not casting" and no stop could reach it.
-                self.sessions[device.id] = previous
             raise
 
         session = self.sessions.get(device.id)

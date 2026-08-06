@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from omarchy_cast.backends.base import BackendError
+from omarchy_cast.backends.base import BackendError, BackendRefused
 from omarchy_cast.backends.stub import StubBackend
 from omarchy_cast.core.daemon import Daemon
 from omarchy_cast.core.device import Device
@@ -320,7 +320,10 @@ class RefusingBackend(StubBackend):
 
     async def start(self, device, mode=MIRROR):
         if mode == self._refuse_mode:
-            raise BackendError(self._reason)
+            # BackendRefused, not BackendError: the difference is precisely
+            # "the device was never touched", which is what licenses the
+            # daemon to keep the record it displaced.
+            raise BackendRefused(self._reason)
         await super().start(device, mode)
 
 
@@ -371,3 +374,34 @@ async def test_refused_extend_preserves_the_surviving_session_mode():
 
     assert daemon.sessions["cast:1"] is original
     assert daemon.sessions["cast:1"].mode == MIRROR
+
+
+class FailingRestartBackend(StubBackend):
+    """A backend that tears the old session down on its way in and then fails --
+    an unreachable receiver, a missing doubletake, a ready timeout. The opposite
+    of a refusal: the device WAS touched, so nothing survives."""
+
+    async def start(self, device, mode=MIRROR):
+        self._emit(device, SessionState.CONNECTING)
+        self._emit(device, SessionState.FAILED, "never started mirroring within 30s")
+        raise BackendError("never started mirroring within 30s")
+
+
+async def test_a_failed_restart_does_not_resurrect_the_dead_session():
+    """The restore added for a refused start must not fire here. It did at
+    first, and left waybar showing a green 'streaming' indicator forever for a
+    cast that had just failed to come back -- the daemon's idle watchdog saw an
+    active session and never exited."""
+    daemon = Daemon(FakeDiscovery([make_device()]), {}, notifier=lambda m: None)
+    daemon.backends["cast"] = StubBackend(daemon.on_state)
+    await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+    assert daemon.sessions["cast:1"].state is SessionState.STREAMING
+
+    # The user re-picks the same device; this time it cannot come up.
+    daemon.backends["cast"] = FailingRestartBackend(daemon.on_state)
+    resp = await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+
+    assert resp["ok"] is False
+    assert daemon.sessions == {}
+    status = await daemon.handle({"cmd": "status"})
+    assert status["data"]["sessions"] == []

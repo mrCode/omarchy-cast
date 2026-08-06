@@ -2,7 +2,7 @@ import asyncio
 import logging
 import uuid as uuid_module
 
-from omarchy_cast.backends.base import Backend, BackendError, StateCallback
+from omarchy_cast.backends.base import Backend, BackendError, BackendRefused, StateCallback
 from omarchy_cast.capture.encoder import (
     NoEncoderAvailable,
     probe_available,
@@ -126,7 +126,7 @@ class CastBackend(Backend):
                 "serve as a second display"
             )
             self._emit(device, SessionState.FAILED, message)
-            raise BackendError(message)
+            raise BackendRefused(message)
 
         self._emit(device, SessionState.CONNECTING)
         self._capture = self._capture_factory(self._config)
