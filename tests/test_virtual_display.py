@@ -155,10 +155,20 @@ def test_remove_reports_failure():
     assert remove(VIRTUAL_NAME, runner) is False
 
 
-def test_cleanup_removes_strays_including_headless():
-    runner = FakeRunner(existing=("eDP-2", VIRTUAL_NAME, "HEADLESS-2"))
-    assert cleanup_strays(runner) == 2
+def test_cleanup_removes_our_own_stray_output():
+    runner = FakeRunner(existing=("eDP-2", VIRTUAL_NAME))
+    assert cleanup_strays(runner) == 1
     assert runner.names == ["eDP-2"]
+
+
+def test_cleanup_leaves_headless_outputs_it_did_not_create():
+    """wayvnc and Sunshine both create HEADLESS-N outputs. Sweeping every
+    headless output destroyed a live one the user owned -- silently, on any
+    omarchy-cast invocation, since this runs at daemon start and on every
+    extend."""
+    runner = FakeRunner(existing=("eDP-2", "HEADLESS-1", VIRTUAL_NAME))
+    assert cleanup_strays(runner) == 1
+    assert runner.names == ["eDP-2", "HEADLESS-1"]
 
 
 def test_cleanup_leaves_real_monitors_alone():

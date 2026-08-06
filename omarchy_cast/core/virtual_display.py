@@ -40,10 +40,6 @@ def _monitor_names(runner) -> set[str] | None:
         return None
 
 
-def _is_virtual(name: str) -> bool:
-    return name == VIRTUAL_NAME or name.startswith("HEADLESS")
-
-
 class _SetupFailed(Exception):
     """Internal: the output exists but could not be made usable."""
 
@@ -121,7 +117,17 @@ def remove(name: str, runner=_run) -> bool:
 
 
 def cleanup_strays(runner=_run) -> int:
-    """Remove virtual outputs left behind by a crash. Called at daemon start."""
+    """Remove our own virtual output if a crash left it behind.
+
+    Only VIRTUAL_NAME is removed. This used to sweep every `HEADLESS*` output
+    as well, which destroys outputs omarchy-cast never created -- wayvnc and
+    Sunshine both make them -- and it runs at daemon start and on every extend,
+    so a user's live remote-desktop output vanished on any invocation.
+
+    The cost is that an output Hyprland renamed to HEADLESS-N (create() warns
+    when that happens) is no longer swept up after a crash. Leaving a stray of
+    ours behind is recoverable; deleting someone else's live output is not.
+    """
     if not available():
         return 0
     names = _monitor_names(runner)
@@ -129,6 +135,12 @@ def cleanup_strays(runner=_run) -> int:
         return 0
     removed = 0
     for name in sorted(names):
-        if _is_virtual(name) and remove(name, runner):
-            removed += 1
+        if name == VIRTUAL_NAME:
+            if remove(name, runner):
+                removed += 1
+        elif name.startswith("HEADLESS"):
+            log.info(
+                "leaving headless output %s alone; omarchy-cast did not create it",
+                name,
+            )
     return removed
