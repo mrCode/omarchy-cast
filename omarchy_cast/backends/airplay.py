@@ -383,8 +383,19 @@ class AirPlayBackend(Backend):
 
     async def stop(self, device: Device) -> None:
         self._emit(device, SessionState.STOPPING)
-        await self._teardown(device.id)
+        leftover = await self._teardown(device.id)
         self._emit(device, SessionState.IDLE)
+        if leftover is not None:
+            # The cast really did stop, so IDLE above is honest -- but the
+            # desktop is not back to how it was found, and stop used to answer
+            # {"ok": true, "stopped": 1} while a phantom 1080p monitor sat
+            # there. Reporting success without having achieved the effect is
+            # the bug this project keeps re-shipping; say so instead.
+            raise BackendError(
+                f"stopped casting to {device.name}, but the virtual output "
+                f"{leftover!r} could not be removed. Remove it with: "
+                f"hyprctl output remove {leftover}"
+            )
 
     async def shutdown(self) -> None:
         for device_id in list(self._sessions):
@@ -438,28 +449,43 @@ class AirPlayBackend(Backend):
         if self._config.airplay_auto_resolution and not self._any_session_needs_display():
             display.restore_mode()
 
-    def _undo_setup(self, virtual_name: str | None) -> None:
+    def _remove_virtual(self, name: str | None) -> str | None:
+        """Remove `name` if there is one. Returns the name still on the desktop
+        when the removal failed, so callers can stop claiming success."""
+        if name is None:
+            return None
+        if virtual_display.remove(name):
+            return None
+        log.warning(
+            "virtual output %s could not be removed and is still on the "
+            "desktop; remove it with: hyprctl output remove %s", name, name,
+        )
+        return name
+
+    def _undo_setup(self, virtual_name: str | None) -> str | None:
         """Undo environment changes from a start() that failed before a
         session existed to hang them off of (see the spawn try/except)."""
-        if virtual_name is not None:
-            virtual_display.remove(virtual_name)
+        leftover = self._remove_virtual(virtual_name)
         self._maybe_restore_display()
+        return leftover
 
-    def _restore_environment(self, session: _Session) -> None:
+    def _restore_environment(self, session: _Session) -> str | None:
         """Undo exactly what `session` set up in start() -- never a sibling
         session's environment, since mirror and extend can be active at once."""
-        if session.virtual is not None:
-            virtual_display.remove(session.virtual)
+        leftover = self._remove_virtual(session.virtual)
         self._maybe_restore_display()
+        return leftover
 
-    async def _teardown(self, device_id: str) -> None:
+    async def _teardown(self, device_id: str) -> str | None:
+        """Tear the session down. Returns the name of a virtual output that
+        survived the teardown, or None when nothing was left behind."""
         session = self._sessions.pop(device_id, None)
         if session is None:
             # This device never had a session, but a crash on a previous run
             # can still have left the display switched (see
             # display.restore_mode's docstring); clear that regardless.
             self._maybe_restore_display()
-            return
+            return None
         session.stopping = True
         session.proc.terminate()
         if session.pump is not None:
@@ -470,4 +496,4 @@ class AirPlayBackend(Backend):
                 await asyncio.wait_for(asyncio.shield(session.pump), timeout=2.0)
             except (asyncio.CancelledError, TimeoutError, Exception):
                 pass
-        self._restore_environment(session)
+        return self._restore_environment(session)

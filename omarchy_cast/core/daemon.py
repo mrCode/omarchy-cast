@@ -236,10 +236,22 @@ class Daemon:
         else:
             return err(f"no active session for: {device_id}")
 
+        # Failures are collected rather than raised through: a backend that
+        # stopped the cast but could not fully clean up (AirPlay failing to
+        # remove its virtual output) must still be reported, but must not
+        # abandon the sessions queued behind it.
+        problems = []
         for session in targets:
             backend = self.backends.get(session.device.protocol)
-            if backend is not None:
+            if backend is None:
+                continue
+            try:
                 await backend.stop(session.device)
+            except BackendError as exc:
+                log.warning("stop for %s: %s", session.device.id, exc)
+                problems.append(str(exc))
+        if problems:
+            return err("; ".join(problems))
         return ok({"stopped": len(targets)})
 
     async def _cmd_pin(self, request: dict) -> dict:

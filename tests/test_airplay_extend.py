@@ -311,6 +311,38 @@ async def test_re_extending_the_same_device_is_not_rejected(fakes):
     await backend.shutdown()
 
 
+# -- fix round 2: a removal that failed is not a successful stop (Finding 6) --
+
+
+async def test_stop_reports_a_virtual_output_it_could_not_remove(fakes, monkeypatch):
+    """virtual_display.remove() returns a bool and nothing looked at it, so
+    stop answered {"ok": true, "stopped": 1} and the menu notified "Stopped
+    casting" while a phantom 1080p monitor stayed on the desktop."""
+    proc = FakeProc([READY + b"\n"])
+    backend, states, _ = make_backend(proc)
+    device = make_device()
+    await backend.start(device, EXTEND)
+
+    monkeypatch.setattr(
+        airplay_mod.virtual_display, "remove", lambda name, *a, **k: False
+    )
+    with pytest.raises(Exception, match="omarchy-cast"):
+        await backend.stop(device)
+
+    # The session really is gone; the error is about what was left behind.
+    assert states[-1][0] is SessionState.IDLE
+    assert device.id not in backend._sessions
+
+
+async def test_stop_stays_quiet_when_the_output_really_went_away(fakes):
+    proc = FakeProc([READY + b"\n"])
+    backend, states, _ = make_backend(proc)
+    device = make_device()
+    await backend.start(device, EXTEND)
+    await backend.stop(device)
+    assert states[-1][0] is SessionState.IDLE
+
+
 # -- fix round 2: the guard must survive a race (Finding 4) --
 
 
