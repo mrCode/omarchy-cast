@@ -79,6 +79,15 @@ def test_create_returns_none_when_creation_fails():
     assert create(runner) is None
 
 
+def test_create_returns_none_and_removes_output_when_geometry_fails():
+    """Half-configured outputs must not be left behind; cleanup_strays exists to
+    prevent desktop strays, not to handle create() failures."""
+    runner = FakeRunner(fail_on="keyword")
+    assert create(runner) is None
+    # The output was created but geometry failed, so it should have been removed.
+    assert VIRTUAL_NAME not in runner.names
+
+
 def test_create_returns_none_when_no_new_monitor_appears():
     class Silent(FakeRunner):
         def __call__(self, argv):

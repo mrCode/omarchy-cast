@@ -77,7 +77,14 @@ def create(runner=_run) -> str | None:
             "on every cast", VIRTUAL_NAME, name,
         )
 
-    runner(["hyprctl", "keyword", "monitor", CONFIG.format(name=name)])
+    code, _ = runner(["hyprctl", "keyword", "monitor", CONFIG.format(name=name)])
+    if code != 0:
+        # The output is half-configured: created but not scaled correctly. Remove
+        # it rather than leave a stray output on the user's desktop.
+        log.warning("could not configure geometry for virtual output %s", name)
+        remove(name, runner)
+        return None
+
     log.info("created virtual output %s at %s", name, MODE_LINE)
     return name
 
