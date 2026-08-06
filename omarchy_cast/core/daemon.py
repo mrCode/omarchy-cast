@@ -3,13 +3,13 @@ import contextlib
 import logging
 import os
 import signal
-import subprocess
 import time
 
 from collections.abc import Callable
 
 from omarchy_cast.backends.base import Backend, BackendError
 from omarchy_cast.core.device import PROTOCOLS, Device
+from omarchy_cast.core.notify import notify
 from omarchy_cast.core.protocol import (
     decode_line,
     encode_response,
@@ -40,14 +40,8 @@ CAST_UNTESTED = (
 
 
 def desktop_notify(message: str) -> None:
-    """Surface a failure via mako. Best effort; never raises."""
-    try:
-        subprocess.run(
-            ["notify-send", "-u", "critical", "omarchy-cast", message],
-            check=False,
-        )
-    except OSError:
-        log.debug("notify-send unavailable", exc_info=True)
+    """Surface a mid-stream crash. Urgent, because nobody is watching for it."""
+    notify(message, urgent=True)
 
 
 def _device_dict(d: Device) -> dict:
@@ -80,6 +74,7 @@ class Daemon:
 
     def on_state(self, device: Device, state: SessionState, error: str | None) -> None:
         session = self.sessions.get(device.id)
+        synthesized = session is None
         if session is None:
             # _cmd_start registers the session (with its mode) before calling
             # the backend, so reaching here means a stray emit for a device
@@ -88,16 +83,28 @@ class Daemon:
             session = Session(device, mode=MIRROR)
             self.sessions[device.id] = session
 
+        was_streaming = session.state is SessionState.STREAMING
+
         try:
             session.transition(state, error)
         except InvalidTransition:
             # Backends emit from background tasks (the AirPlay supervisor among
             # them). A late or duplicate emit must not take that task down.
             log.debug("ignoring %s -> %s for %s", session.state, state, device.id)
+            if synthesized:
+                # Nothing legal ever landed on it, so this session records no
+                # real cast. Leaving it would strand an entry that `status`
+                # hides (it is IDLE) but `stop` would still try to tear down.
+                self.sessions.pop(device.id, None)
             return
 
-        if state is SessionState.FAILED:
-            # waybar may be collapsed into the tray, so push it to the user too.
+        if state is SessionState.FAILED and was_streaming:
+            # Only a cast that DIED is announced here. A cast that never came
+            # up fails the `start` command too, and whichever client ran it
+            # reports that error itself -- notifying both produced two sticky
+            # banners for one failure. A mid-stream crash has no command to
+            # answer, so this is the only way the user learns the screen they
+            # are presenting from went dark.
             try:
                 self._notify(error or f"casting to {device.name} failed")
             except Exception:

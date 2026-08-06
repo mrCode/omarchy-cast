@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 
+from omarchy_cast.core.notify import notify
 from omarchy_cast.core.session import EXTEND, MIRROR, MODES
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.cli.menu import (
@@ -57,10 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _notify(message: str, urgent: bool = False) -> None:
-    argv = ["notify-send"]
-    if urgent:
-        argv += ["-u", "critical"]
-    subprocess.run([*argv, "omarchy-cast", message], check=False)
+    """Errors here are answers to a command the user just ran, so they are not
+    urgent -- the user is already looking. See core.notify for why that matters."""
+    notify(message, urgent=urgent)
 
 
 def _run_waybar() -> int:
@@ -113,7 +113,7 @@ def _run_menu() -> int:
         result = asyncio.run(request("stop"))
         if not result.get("ok"):
             message = result.get("error", "unknown error")
-            _notify(message, urgent=True)
+            _notify(message)
             return _fail(message)
         _notify("Stopped casting")
         return 0
@@ -131,7 +131,7 @@ def _run_menu() -> int:
         added = asyncio.run(request("add", address=address, protocol="airplay"))
         if not added.get("ok"):
             message = added.get("error", "unknown error")
-            _notify(message, urgent=True)
+            _notify(message)
             return _fail(message)
         device_id = (added.get("data") or {})["device"]["id"]
     else:
@@ -145,7 +145,7 @@ def _run_menu() -> int:
     result = asyncio.run(request("start", device_id=device_id, mode=mode))
     if not result.get("ok"):
         message = result.get("error", "unknown error")
-        _notify(message, urgent=True)
+        _notify(message)
         return _fail(message)
 
     warning = (result.get("data") or {}).get("warning")

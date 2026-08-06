@@ -32,11 +32,29 @@ def make_daemon(**stub_kwargs):
     return daemon, sent
 
 
-async def test_failure_notifies_the_user():
-    daemon, sent = make_daemon(fail_with="mirroring stopped unexpectedly")
+async def test_a_cast_that_dies_mid_stream_notifies_the_user():
+    """Nothing else can tell them: no command is waiting on this."""
+    daemon, sent = make_daemon()
     await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+    assert daemon.sessions["cast:1"].state is SessionState.STREAMING
+
+    daemon.on_state(make_device(), SessionState.FAILED, "mirroring stopped unexpectedly")
+
     assert len(sent) == 1
     assert "mirroring stopped unexpectedly" in sent[0]
+
+
+async def test_a_failed_start_does_not_notify():
+    """The `start` command returns this same error, and whichever client ran it
+    reports it. Notifying here too gave the user two sticky banners for one
+    failure -- the complaint that prompted splitting these cases apart."""
+    daemon, sent = make_daemon(fail_with="mirroring stopped unexpectedly")
+
+    resp = await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+
+    assert resp["ok"] is False
+    assert "mirroring stopped unexpectedly" in resp["error"]
+    assert sent == []
 
 
 async def test_normal_stop_does_not_notify():
@@ -68,6 +86,12 @@ async def test_late_emit_after_failure_is_ignored_not_raised():
     """Backends emit from background tasks; a late emit must not crash them."""
     daemon, sent = make_daemon(fail_with="boom")
     await daemon.handle({"cmd": "start", "device_id": "cast:1"})
-    # The session is already gone; this transition is illegal from IDLE.
+
+    # The session is already gone; this transition is illegal from IDLE. The
+    # assertion is that this returns at all -- it used to be made indirectly
+    # via a notification count, which stopped meaning anything once a failed
+    # start no longer notifies.
     daemon.on_state(make_device(), SessionState.STOPPING, None)
-    assert len(sent) == 1
+
+    assert daemon.sessions == {}
+    assert sent == []
