@@ -150,6 +150,89 @@ async def test_a_start_that_raises_before_any_emit_leaves_no_stale_session():
     assert daemon.sessions == {}
 
 
+async def test_stop_during_the_pre_emit_window_reports_no_active_session():
+    """Regression test: a session registered by _cmd_start but not yet
+    emitted from (e.g. during AirPlay's up-to-2s pre-start teardown) is not
+    actually running. Before the fix, stop found it, called backend.stop()
+    (a no-op the backend doesn't recognise since nothing is registered there
+    yet, its STOPPING/IDLE emits silently swallowed as illegal transitions
+    from IDLE), and still reported {"stopped": 1} -- success with nothing
+    stopped, while the device carried on connecting.
+    """
+    device = make_device()
+    release = asyncio.Event()
+
+    class SlowStart(StubBackend):
+        async def start(self, device, mode=MIRROR):
+            await release.wait()
+            await super().start(device, mode)
+
+    daemon = make_daemon()
+    daemon.backends["cast"] = SlowStart(daemon.on_state)
+
+    task = asyncio.create_task(daemon.handle({"cmd": "start", "device_id": device.id}))
+    await asyncio.sleep(0)  # let the start register its session and suspend
+
+    resp = await daemon.handle({"cmd": "stop", "device_id": device.id})
+    assert resp["ok"] is False
+    assert "no active session" in resp["error"]
+
+    # The stop must not have disturbed the in-flight start.
+    release.set()
+    start_resp = await task
+    assert start_resp["ok"] is True
+    assert daemon.sessions[device.id].state == "streaming"
+
+
+async def test_stop_all_skips_sessions_in_the_pre_emit_window():
+    device = make_device()
+    release = asyncio.Event()
+
+    class SlowStart(StubBackend):
+        async def start(self, device, mode=MIRROR):
+            await release.wait()
+            await super().start(device, mode)
+
+    daemon = make_daemon()
+    daemon.backends["cast"] = SlowStart(daemon.on_state)
+
+    task = asyncio.create_task(daemon.handle({"cmd": "start", "device_id": device.id}))
+    await asyncio.sleep(0)
+
+    resp = await daemon.handle({"cmd": "stop"})
+    assert resp["ok"] is True
+    assert resp["data"]["stopped"] == 0
+
+    release.set()
+    await task
+
+
+async def test_pin_during_the_pre_emit_window_reports_no_pending_session():
+    """Same shape as the stop regression: submitting a PIN to a session whose
+    backend has not started yet must fail rather than silently do nothing.
+    """
+    device = make_device()
+    release = asyncio.Event()
+
+    class SlowStart(StubBackend):
+        async def start(self, device, mode=MIRROR):
+            await release.wait()
+            await super().start(device, mode)
+
+    daemon = make_daemon()
+    daemon.backends["cast"] = SlowStart(daemon.on_state)
+
+    task = asyncio.create_task(daemon.handle({"cmd": "start", "device_id": device.id}))
+    await asyncio.sleep(0)
+
+    resp = await daemon.handle({"cmd": "pin", "device_id": device.id, "pin": "1234"})
+    assert resp["ok"] is False
+    assert "no pending session" in resp["error"]
+
+    release.set()
+    await task
+
+
 def test_cli_passes_the_mode(monkeypatch):
     from omarchy_cast.cli import main as cli_main
 

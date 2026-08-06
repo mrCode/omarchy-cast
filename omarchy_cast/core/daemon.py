@@ -209,9 +209,16 @@ class Daemon:
 
     async def _cmd_stop(self, request: dict) -> dict:
         device_id = request.get("device_id")
+        # A session in IDLE has been registered by _cmd_start but its backend
+        # has not emitted anything yet (e.g. AirPlay's pre-start teardown,
+        # which can take up to 2s). backend.stop() on it would be a no-op the
+        # backend doesn't recognise, and on_state would silently swallow the
+        # resulting illegal transitions -- so it must not count as stoppable.
         if device_id is None:
-            targets = list(self.sessions.values())
-        elif device_id in self.sessions:
+            targets = [
+                s for s in self.sessions.values() if s.state is not SessionState.IDLE
+            ]
+        elif device_id in self.sessions and self.sessions[device_id].state is not SessionState.IDLE:
             targets = [self.sessions[device_id]]
         else:
             return err(f"no active session for: {device_id}")
@@ -225,7 +232,9 @@ class Daemon:
     async def _cmd_pin(self, request: dict) -> dict:
         device_id = request.get("device_id")
         session = self.sessions.get(device_id)
-        if session is None:
+        # Same reasoning as _cmd_stop: an IDLE session has no backend-side
+        # counterpart yet, so there is nothing to submit a PIN to.
+        if session is None or session.state is SessionState.IDLE:
             return err(f"no pending session for: {device_id}")
         backend = self.backends[session.device.protocol]
         await backend.submit_pin(session.device, str(request.get("pin", "")))
