@@ -200,3 +200,55 @@ async def test_stop_without_a_session_is_safe():
     backend, states, _, _ = make_backend()
     await backend.stop(make_device())
     assert states[-1][0] is SessionState.IDLE
+
+
+async def test_refused_extend_does_not_strand_a_live_cast_in_the_daemon():
+    """End-to-end over the REAL rejection, not a stand-in: a live Chromecast
+    mirror asked to extend must still be listed and stoppable afterwards.
+
+    The daemon overwrites the session record before calling the backend, so a
+    refusal that never touches the device used to erase a cast that was still
+    running -- invisible to waybar and unreachable by stop."""
+    from omarchy_cast.core.daemon import Daemon
+    from omarchy_cast.core.session import SessionState
+
+    class FakeDiscovery:
+        def __init__(self, devices):
+            self._devices = list(devices)
+
+        def devices(self):
+            return self._devices
+
+        def add(self, device):
+            self._devices.append(device)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    device = make_device()
+    capture, cast = FakeCapture(), FakeChromecast()
+    daemon = Daemon(FakeDiscovery([device]), {}, notifier=lambda m: None)
+    daemon.backends["cast"] = CastBackend(
+        daemon.on_state,
+        Config(),
+        capture_factory=lambda cfg: capture,
+        chromecast_factory=lambda d: cast,
+    )
+
+    await daemon.handle({"cmd": "start", "device_id": device.id})
+    assert daemon.sessions[device.id].state is SessionState.STREAMING
+
+    resp = await daemon.handle(
+        {"cmd": "start", "device_id": device.id, "mode": "extend"}
+    )
+
+    assert resp["ok"] is False
+    assert "AirPlay-only" in resp["error"]
+
+    status = await daemon.handle({"cmd": "status"})
+    assert [s["id"] for s in status["data"]["sessions"]] == [device.id]
+    assert status["data"]["sessions"][0]["state"] == "streaming"
+    assert (await daemon.handle({"cmd": "stop", "device_id": device.id}))["ok"] is True

@@ -6,7 +6,7 @@ from omarchy_cast.backends.base import BackendError
 from omarchy_cast.backends.stub import StubBackend
 from omarchy_cast.core.daemon import Daemon
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import EXTEND, MIRROR, Session
+from omarchy_cast.core.session import EXTEND, MIRROR, Session, SessionState
 
 
 class FakeDiscovery:
@@ -302,3 +302,72 @@ def test_cli_rejects_a_bad_mode(monkeypatch):
 
     with pytest.raises(SystemExit):
         cli_main.main(["start", "cast:1", "--mode", "sideways"])
+
+
+# -- a pre-flight refusal must not strand the cast it refused ---------------
+
+
+class RefusingBackend(StubBackend):
+    """Models the two refusals that happen BEFORE the backend touches the
+    device: extend when another device already holds the virtual output, and
+    extend asked of a Chromecast. Both raise without emitting, leaving any
+    existing cast for that device running untouched."""
+
+    def __init__(self, on_state, *, refuse_mode=EXTEND, reason="refused"):
+        super().__init__(on_state)
+        self._refuse_mode = refuse_mode
+        self._reason = reason
+
+    async def start(self, device, mode=MIRROR):
+        if mode == self._refuse_mode:
+            raise BackendError(self._reason)
+        await super().start(device, mode)
+
+
+async def _daemon_with_live_mirror(reason="refused"):
+    daemon = Daemon(FakeDiscovery([make_device()]), {}, notifier=lambda m: None)
+    daemon.backends["cast"] = RefusingBackend(daemon.on_state, reason=reason)
+    await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+    assert daemon.sessions["cast:1"].state is SessionState.STREAMING
+    return daemon
+
+
+async def test_refused_extend_leaves_the_live_mirror_visible():
+    """It used to vanish: _cmd_start overwrote the record before the backend
+    refused, and the FAILED pop then took the replacement with it. waybar
+    showed 'not casting' while doubletake was still streaming."""
+    daemon = await _daemon_with_live_mirror("already extending to Living Room")
+
+    resp = await daemon.handle(
+        {"cmd": "start", "device_id": "cast:1", "mode": "extend"}
+    )
+
+    assert resp["ok"] is False
+    assert "already extending" in resp["error"]
+
+    status = await daemon.handle({"cmd": "status"})
+    assert [s["id"] for s in status["data"]["sessions"]] == ["cast:1"]
+    assert status["data"]["sessions"][0]["state"] == "streaming"
+
+
+async def test_refused_extend_leaves_the_live_mirror_stoppable():
+    """The worse half: an invisible session is also an unstoppable one."""
+    daemon = await _daemon_with_live_mirror()
+
+    await daemon.handle({"cmd": "start", "device_id": "cast:1", "mode": "extend"})
+    resp = await daemon.handle({"cmd": "stop", "device_id": "cast:1"})
+
+    assert resp["ok"] is True
+    assert daemon.sessions == {}
+
+
+async def test_refused_extend_preserves_the_surviving_session_mode():
+    """The restored record must be the original, not a fresh one wearing the
+    refused mode -- otherwise status would report 'extend' for a mirror."""
+    daemon = await _daemon_with_live_mirror()
+    original = daemon.sessions["cast:1"]
+
+    await daemon.handle({"cmd": "start", "device_id": "cast:1", "mode": "extend"})
+
+    assert daemon.sessions["cast:1"] is original
+    assert daemon.sessions["cast:1"].mode == MIRROR

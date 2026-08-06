@@ -208,6 +208,7 @@ class Daemon:
         # take up to 2s), and the daemon serves clients concurrently, so a
         # second in-flight start could otherwise overwrite a "pending mode"
         # before the first device's session was ever created from it.
+        previous = self.sessions.get(device.id)
         session = Session(device, mode=mode)
         self.sessions[device.id] = session
         try:
@@ -218,6 +219,14 @@ class Daemon:
             # never-transitioned session behind to block a retry.
             if self.sessions.get(device.id) is session and session.state is SessionState.IDLE:
                 self.sessions.pop(device.id, None)
+            if self.sessions.get(device.id) is None and previous is not None:
+                # Some refusals happen before the backend touches this device at
+                # all -- extend rejected because another device already has the
+                # virtual output, or extend asked of a Chromecast. Those leave the
+                # device's existing cast running, so the record we displaced is
+                # still true and has to go back. Dropping it stranded a live
+                # session: waybar showed "not casting" and no stop could reach it.
+                self.sessions[device.id] = previous
             raise
 
         session = self.sessions.get(device.id)
