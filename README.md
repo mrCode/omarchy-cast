@@ -35,13 +35,24 @@ requires AES-CTR-128 that GStreamer's SRTP elements do not implement. See
 ## Install
 
 ```bash
-git clone https://github.com/mrCode/omarchy-cast && cd omarchy-cast && ./install.sh
+git clone https://github.com/mrCode/omarchy-cast && cd omarchy-cast && makepkg -si
 ```
 
-This copies the package to `~/.local/share/omarchy-cast` and writes launchers
-into `~/.local/bin`. It deliberately does not use pip: Arch ships `python`
-without pip and marks the environment externally-managed (PEP 668), and every
-dependency is a system package already.
+That builds and installs a normal pacman package, so `pacman -Qi omarchy-cast`,
+clean removal and dependency resolution all work. The build runs the test suite
+first and fails if anything is red.
+
+Prefer not to use pacman? `./install.sh` copies the package into
+`~/.local/share/omarchy-cast` and writes launchers to `~/.local/bin`. It
+deliberately does not use pip: Arch ships `python` without pip and marks the
+environment externally-managed (PEP 668), and every dependency is a system
+package already. Uninstall with `./uninstall.sh`.
+
+> **Not on the AUR.** Arch [blocked all AUR pushes in August 2026](https://www.phoronix.com/news/Arch-Linux-AUR-Adoptions-Halted)
+> after a wave of malicious packages — the third incident since June. The AUR
+> only ever hosted PKGBUILDs, never the code, so building from this clone gives
+> you the same package while letting you read exactly what you are running.
+> An AUR package may follow if and when uploads reopen.
 
 AirPlay support additionally needs [doubletake](https://github.com/omarroth/doubletake)
 — specifically the **git** package:
@@ -53,9 +64,6 @@ yay -S doubletake-git
 The 0.4.0 release cannot capture on Hyprland: it hardcodes `vapostproc`, which
 fails to import the compositor's padded DMA-BUF and mirrors a black screen with
 no error. `doubletake-git` has a software fallback that omarchy-cast triggers.
-
-Uninstall with `./uninstall.sh`. An AUR `PKGBUILD` is included but not yet
-published.
 
 ## Usage
 
