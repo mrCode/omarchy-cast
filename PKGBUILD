@@ -31,7 +31,7 @@ optdepends=(
 )
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP')  # replace with the real checksum once v0.1.0 is tagged
+sha256sums=('7690225cadd03621b110508053525fe480a3ab0d6694099dde87091dcff2c46c')
 
 build() {
   cd "$pkgname-$pkgver"
