@@ -323,3 +323,101 @@ async def test_list_stops_waiting_at_the_grace_ceiling():
 
     assert resp["data"]["devices"] == []
     assert monkeypatched_grace - 0.15 < waited < monkeypatched_grace + 0.3
+
+
+# -- manually added devices survive the daemon ------------------------------
+
+
+class RecordingDiscovery:
+    def __init__(self):
+        self.added = []
+        self.removed = []
+
+    def devices(self):
+        return list(self.added)
+
+    def add(self, device):
+        self.added.append(device)
+
+    def remove(self, device_id):
+        before = len(self.added)
+        self.added = [d for d in self.added if d.id != device_id]
+        self.removed.append(device_id)
+        return len(self.added) != before
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+async def test_add_remembers_the_device_for_next_time(tmp_path, monkeypatch):
+    """The daemon exits after 30s idle. Before this, a manually added receiver
+    was gone within a minute and the address had to be retyped every cast."""
+    store = tmp_path / "manual.json"
+    monkeypatch.setattr(daemon_mod.manual, "path", lambda: store)
+    daemon = Daemon(RecordingDiscovery(), {}, notifier=lambda m: None)
+
+    resp = await daemon.handle(
+        {"cmd": "add", "address": "10.10.10.231", "protocol": "airplay",
+         "name": "Meeting Room"}
+    )
+
+    assert resp["ok"] is True
+    remembered = daemon_mod.manual.load(store)
+    assert [d.address for d in remembered] == ["10.10.10.231"]
+    assert remembered[0].name == "Meeting Room"
+
+
+async def test_forget_drops_a_remembered_device(tmp_path, monkeypatch):
+    store = tmp_path / "manual.json"
+    monkeypatch.setattr(daemon_mod.manual, "path", lambda: store)
+    discovery = RecordingDiscovery()
+    daemon = Daemon(discovery, {}, notifier=lambda m: None)
+    await daemon.handle(
+        {"cmd": "add", "address": "10.10.10.231", "protocol": "airplay"}
+    )
+
+    resp = await daemon.handle({"cmd": "forget", "device_id": "airplay:10.10.10.231"})
+
+    assert resp["ok"] is True
+    assert daemon_mod.manual.load(store) == []
+    # Gone from the running daemon too, not just from disk -- otherwise the
+    # menu keeps offering it until the next restart.
+    assert discovery.removed == ["airplay:10.10.10.231"]
+    assert discovery.devices() == []
+
+
+async def test_forgetting_an_unknown_device_is_an_error(tmp_path, monkeypatch):
+    """Reporting success for a no-op is the failure shape this project keeps
+    paying for."""
+    monkeypatch.setattr(daemon_mod.manual, "path", lambda: tmp_path / "manual.json")
+    daemon = Daemon(RecordingDiscovery(), {}, notifier=lambda m: None)
+
+    resp = await daemon.handle({"cmd": "forget", "device_id": "airplay:nope"})
+
+    assert resp["ok"] is False
+    assert "not a remembered device" in resp["error"]
+
+
+async def test_forget_requires_a_device_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon_mod.manual, "path", lambda: tmp_path / "manual.json")
+    daemon = Daemon(RecordingDiscovery(), {}, notifier=lambda m: None)
+
+    resp = await daemon.handle({"cmd": "forget"})
+
+    assert resp["ok"] is False
+
+
+async def test_a_failure_to_remember_does_not_fail_the_add(tmp_path, monkeypatch):
+    """Remembering is a convenience. If the disk is read-only the user should
+    still get their cast."""
+    monkeypatch.setattr(daemon_mod.manual, "remember", lambda d, f=None: False)
+    daemon = Daemon(RecordingDiscovery(), {}, notifier=lambda m: None)
+
+    resp = await daemon.handle(
+        {"cmd": "add", "address": "10.10.10.231", "protocol": "airplay"}
+    )
+
+    assert resp["ok"] is True

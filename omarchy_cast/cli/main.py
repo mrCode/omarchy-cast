@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
     pin.add_argument("device_id")
     pin.add_argument("pin")
 
+    forget = sub.add_parser(
+        "forget", help="forget a receiver that was added by address"
+    )
+    forget.add_argument("device_id")
+
     sub.add_parser("waybar", help="print waybar JSON for the cast indicator")
     sub.add_parser("menu", help="pick a receiver via walker and start casting")
 
@@ -254,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "stop":
             response = asyncio.run(request("stop", device_id=args.device_id))
+        elif args.command == "forget":
+            response = asyncio.run(request("forget", device_id=args.device_id))
         else:
             response = asyncio.run(request(args.command))
     except DaemonUnavailable as exc:
@@ -271,6 +278,8 @@ def main(argv: list[str] | None = None) -> int:
         _print_sessions(data.get("sessions", []))
     elif args.command == "stop":
         print(f"stopped {data.get('stopped', 0)} session(s)")
+    elif args.command == "forget":
+        print(f"forgot {data.get('forgot')}")
     else:
         print(data.get("state", "ok"))
     return 0

@@ -111,6 +111,15 @@ class Discovery:
         with self._lock:
             self._devices[device.id] = device
 
+    def remove(self, device_id: str) -> bool:
+        """Drop a device from the live list.
+
+        Only meaningful for manually added ones: anything mDNS found will be
+        re-added the moment it announces again, which is correct.
+        """
+        with self._lock:
+            return self._devices.pop(device_id, None) is not None
+
     # zeroconf calls this with `zeroconf` as a keyword argument.
     def _on_change(self, zeroconf, service_type, name, state_change) -> None:
         parser = PARSERS.get(service_type)

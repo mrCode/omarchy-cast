@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 
 from omarchy_cast.backends.base import Backend, BackendError, BackendRefused
+from omarchy_cast.core import manual
 from omarchy_cast.core.device import PROTOCOLS, Device
 from omarchy_cast.core.notify import notify
 from omarchy_cast.core.protocol import (
@@ -214,7 +215,32 @@ class Daemon:
             protocol=protocol,
         )
         self.discovery.add(device)
+        # Remembered on disk because the daemon exits after 30s idle. A device
+        # that needed --address once will need it every time -- discovery is
+        # never going to start finding it -- so losing this on the next restart
+        # meant retyping the address for every cast.
+        if not manual.remember(device):
+            log.warning("added %s but could not remember it for next time", device.id)
         return ok({"device": _device_dict(device)})
+
+    async def _cmd_forget(self, request: dict) -> dict:
+        """Drop a remembered device.
+
+        These entries never expire on their own: an address that was right on
+        one network is wrong on the next, so without a way to remove them the
+        menu accumulates receivers that can never be reached.
+        """
+        device_id = request.get("device_id")
+        if not device_id:
+            return err("forget requires a device id")
+
+        if not manual.forget(device_id):
+            return err(f"not a remembered device: {device_id}")
+
+        # Also drop it from the running daemon, so the change shows up in the
+        # menu now rather than after the next restart.
+        self.discovery.remove(device_id)
+        return ok({"forgot": device_id})
 
     async def _cmd_start(self, request: dict) -> dict:
         device_id = request.get("device_id")
@@ -375,6 +401,8 @@ class Daemon:
 
         self.discovery.start()
         self._discovery_started_at = time.monotonic()
+        for device in manual.load():
+            self.discovery.add(device)
         server = await asyncio.start_unix_server(self._on_client, path=str(path))
         os.chmod(path, 0o600)
         watchdog = asyncio.create_task(self._idle_watchdog())
