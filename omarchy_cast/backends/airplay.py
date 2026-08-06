@@ -222,7 +222,7 @@ class AirPlayBackend(Backend):
 
     # -- lifecycle ---------------------------------------------------------
 
-    async def start(self, device: Device) -> None:
+    async def start(self, device: Device, mode: str = "mirror") -> None:
         await self._teardown(device.id)
         self._emit(device, SessionState.CONNECTING)
 

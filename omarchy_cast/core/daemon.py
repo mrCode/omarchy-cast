@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 
 from omarchy_cast.backends.base import Backend, BackendError
+from omarchy_cast.backends.creds import MODES
 from omarchy_cast.core.device import PROTOCOLS, Device
 from omarchy_cast.core.protocol import (
     decode_line,
@@ -67,6 +68,8 @@ class Daemon:
         self.sessions: dict[str, Session] = {}
         self.idle_timeout = idle_timeout
         self._notify = notifier or desktop_notify
+        # Set for the duration of a start so on_state can label the session.
+        self._pending_mode = "mirror"
         self._last_active = time.monotonic()
         self._stopping = asyncio.Event()
 
@@ -75,7 +78,7 @@ class Daemon:
     def on_state(self, device: Device, state: SessionState, error: str | None) -> None:
         session = self.sessions.get(device.id)
         if session is None:
-            session = Session(device)
+            session = Session(device, mode=self._pending_mode)
             self.sessions[device.id] = session
 
         try:
@@ -132,6 +135,7 @@ class Daemon:
                 "name": s.device.name,
                 "protocol": s.device.protocol,
                 "state": str(s.state),
+                "mode": s.mode,
                 "error": s.error,
             }
             for s in self.sessions.values()
@@ -164,6 +168,10 @@ class Daemon:
 
     async def _cmd_start(self, request: dict) -> dict:
         device_id = request.get("device_id")
+        mode = request.get("mode", "mirror")
+        if mode not in MODES:
+            return err(f"unknown mode: {mode}; expected one of {MODES}")
+
         device = self._find_device(device_id)
         if device is None:
             return err(f"device not found: {device_id}")
@@ -172,9 +180,14 @@ class Daemon:
         if backend is None:
             return err(f"no backend for protocol: {device.protocol}")
 
-        await backend.start(device)
+        self._pending_mode = mode
+        try:
+            await backend.start(device, mode)
+        finally:
+            self._pending_mode = "mirror"
+
         session = self.sessions.get(device.id)
-        data = {"state": str(session.state) if session else "idle"}
+        data = {"state": str(session.state) if session else "idle", "mode": mode}
         if device.protocol == "cast":
             data["warning"] = CAST_UNTESTED
             log.warning(CAST_UNTESTED)

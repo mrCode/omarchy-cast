@@ -33,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="protocol to use with --address (default: airplay)",
     )
     start.add_argument("--name", help="display name for a device added by address")
+    start.add_argument(
+        "--mode",
+        default="mirror",
+        choices=("mirror", "extend"),
+        help="mirror the screen (default) or extend onto a virtual display",
+    )
 
     stop = sub.add_parser("stop", help="stop mirroring (all sessions if no device given)")
     stop.add_argument("device_id", nargs="?", default=None)
@@ -190,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                 device_id, code = _resolve_by_address(args)
                 if device_id is None:
                     return code
-            response = asyncio.run(request("start", device_id=device_id))
+            response = asyncio.run(request("start", device_id=device_id, mode=args.mode))
         elif args.command == "pin":
             response = asyncio.run(
                 request("pin", device_id=args.device_id, pin=args.pin)

@@ -111,7 +111,7 @@ class CastBackend(Backend):
         self._capture = None
         self._cast = None
 
-    async def start(self, device: Device) -> None:
+    async def start(self, device: Device, mode: str = "mirror") -> None:
         self._emit(device, SessionState.CONNECTING)
         self._capture = self._capture_factory(self._config)
 

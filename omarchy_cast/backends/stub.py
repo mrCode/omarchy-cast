@@ -23,7 +23,7 @@ class StubBackend(Backend):
         self._fail_with = fail_with
         self._needs_pin = needs_pin
 
-    async def start(self, device: Device) -> None:
+    async def start(self, device: Device, mode: str = "mirror") -> None:
         self._emit(device, SessionState.CONNECTING)
         if self._fail_with:
             self._emit(device, SessionState.FAILED, self._fail_with)

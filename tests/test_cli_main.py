@@ -42,7 +42,7 @@ def test_start_passes_device_id(fake_request):
     calls, responses = fake_request
     responses["start"] = {"ok": True, "data": {"state": "streaming"}}
     assert cli_main.main(["start", "cast:1"]) == 0
-    assert calls[0] == ("start", {"device_id": "cast:1"})
+    assert calls[0] == ("start", {"device_id": "cast:1", "mode": "mirror"})
 
 
 def test_error_response_returns_nonzero_and_prints_to_stderr(fake_request, capsys):
@@ -84,7 +84,7 @@ def test_start_by_address_registers_then_starts(fake_request):
     assert cli_main.main(["start", "--address", "192.168.1.231"]) == 0
     assert calls[0][0] == "add"
     assert calls[0][1]["address"] == "192.168.1.231"
-    assert calls[1] == ("start", {"device_id": "airplay:192.168.1.231"})
+    assert calls[1] == ("start", {"device_id": "airplay:192.168.1.231", "mode": "mirror"})
 
 
 def test_start_by_address_honours_protocol(fake_request):

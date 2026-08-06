@@ -34,8 +34,9 @@ class InvalidTransition(Exception):
 
 
 class Session:
-    def __init__(self, device: Device) -> None:
+    def __init__(self, device: Device, mode: str = "mirror") -> None:
         self.device = device
+        self.mode = mode
         self.state = SessionState.IDLE
         self.error: str | None = None
         self.started_at: float | None = None
