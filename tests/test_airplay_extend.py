@@ -311,6 +311,56 @@ async def test_re_extending_the_same_device_is_not_rejected(fakes):
     await backend.shutdown()
 
 
+# -- fix round 2: the crash diagnosis has to reach the log (Finding 9) --
+
+
+async def _wait_for_failed(states, proc):
+    proc.die()
+    for _ in range(80):
+        await asyncio.sleep(0.01)
+        if states and states[-1][0] is SessionState.FAILED:
+            return
+    raise AssertionError(f"no FAILED emit; got {states}")
+
+
+async def test_a_crash_is_written_to_the_log_not_just_notified(fakes, caplog):
+    """The full diagnostic went only to a transient desktop notification, so
+    daemon.log could not explain why a session ended -- a gap hit during this
+    branch's own hardware testing."""
+    import logging
+
+    proc = FakeProc([READY + b"\n"])
+    backend, states, _ = make_backend(proc)
+    with caplog.at_level(logging.WARNING, logger="omarchy_cast.backends.airplay"):
+        await backend.start(make_device(), MIRROR)
+        await _wait_for_failed(states, proc)
+    assert "stopped unexpectedly" in caplog.text
+    assert "Living Room" in caplog.text
+
+
+async def test_a_crashed_extend_does_not_call_itself_a_mirror(fakes, caplog):
+    """The message hardcoded "mirroring to X stopped unexpectedly" for every
+    session, so an extend that died reported a mirror that never existed."""
+    import logging
+
+    proc = FakeProc([READY + b"\n"])
+    backend, states, _ = make_backend(proc)
+    with caplog.at_level(logging.WARNING, logger="omarchy_cast.backends.airplay"):
+        await backend.start(make_device(), EXTEND)
+        await _wait_for_failed(states, proc)
+    assert "extending to Living Room stopped unexpectedly" in states[-1][1]
+    assert "mirroring" not in states[-1][1]
+    assert "extending to Living Room stopped unexpectedly" in caplog.text
+
+
+async def test_a_crashed_mirror_still_says_mirroring(fakes):
+    proc = FakeProc([READY + b"\n"])
+    backend, states, _ = make_backend(proc)
+    await backend.start(make_device(), MIRROR)
+    await _wait_for_failed(states, proc)
+    assert "mirroring to Living Room stopped unexpectedly" in states[-1][1]
+
+
 # -- fix round 2: a removal that failed is not a successful stop (Finding 6) --
 
 

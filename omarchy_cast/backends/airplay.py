@@ -128,6 +128,9 @@ class _Session:
         self.needs_pin = asyncio.Event()
         self.exited = asyncio.Event()
         self.stopping = False
+        # Which mode start() launched this session in, so a crash can describe
+        # what actually stopped instead of always saying "mirroring".
+        self.mode = MIRROR
         # Set once STREAMING has actually been reported. The pump only treats a
         # process exit as a crash after that; before it, _await_ready owns the
         # outcome, so a startup failure cannot be overwritten by a late
@@ -322,6 +325,7 @@ class AirPlayBackend(Backend):
             raise
 
         session = _Session(device, proc)
+        session.mode = mode
         session.virtual = virtual_name
         session.switched_display = switched_display
         self._sessions[device.id] = session
@@ -422,12 +426,18 @@ class AirPlayBackend(Backend):
             if session.streaming and not session.stopping:
                 self._sessions.pop(session.device.id, None)
                 self._restore_environment(session)
-                self._emit(
-                    session.device,
-                    SessionState.FAILED,
-                    f"mirroring to {session.device.name} stopped unexpectedly "
-                    f"({session.tail(120) or 'process exited'})",
+                verb = "extending to" if session.mode == EXTEND else "mirroring to"
+                message = (
+                    f"{verb} {session.device.name} stopped unexpectedly "
+                    f"({session.tail(120) or 'process exited'})"
                 )
+                # Logged as well as emitted: the emit becomes a desktop
+                # notification that disappears, and daemon.log was then the
+                # only record of the session -- with nothing in it explaining
+                # why the session ended. That gap was hit while testing this
+                # very branch on hardware.
+                log.warning("%s", message)
+                self._emit(session.device, SessionState.FAILED, message)
 
     async def _fail(self, session: _Session, message: str) -> None:
         await self._teardown(session.device.id)
