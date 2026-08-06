@@ -13,7 +13,7 @@ from omarchy_cast.capture.pipeline import CapturePipeline, build_pipeline_descri
 from omarchy_cast.capture.portal import PortalError, open_screencast
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import MIRROR, SessionState
+from omarchy_cast.core.session import EXTEND, MIRROR, SessionState
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +112,22 @@ class CastBackend(Backend):
         self._cast = None
 
     async def start(self, device: Device, mode: str = MIRROR) -> None:
+        if mode == EXTEND:
+            # Extend means the receiver becomes a second display. The Default
+            # Media Receiver buffers a media stream, so a window dragged onto
+            # it would respond a second or more late -- and this path captures
+            # the real screen, with no virtual output anywhere in it.
+            # Accepting the mode and ignoring it, as this did, made status,
+            # waybar and the menu all report an extend that was really a
+            # mirror, and pointed the user at an 'omarchy-cast' output that
+            # did not exist.
+            message = (
+                "extend is AirPlay-only; Chromecast buffers 1-3s and cannot "
+                "serve as a second display"
+            )
+            self._emit(device, SessionState.FAILED, message)
+            raise BackendError(message)
+
         self._emit(device, SessionState.CONNECTING)
         self._capture = self._capture_factory(self._config)
 

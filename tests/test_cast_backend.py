@@ -4,7 +4,7 @@ from omarchy_cast.backends.base import BackendError
 from omarchy_cast.backends.cast import CAST_APP_ID, CastBackend, host_tuple
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import SessionState
+from omarchy_cast.core.session import EXTEND, MIRROR, SessionState
 
 
 def make_device():
@@ -161,6 +161,39 @@ async def test_cast_does_not_support_pin():
     backend, _, _, _ = make_backend()
     with pytest.raises(BackendError, match="PIN"):
         await backend.submit_pin(make_device(), "1234")
+
+
+async def test_extend_is_rejected_rather_than_silently_mirroring():
+    """CastBackend accepted `mode` and never referenced it. `omarchy-cast start
+    cast:1 --mode extend` validated, reported "mode": "extend" in status, drew
+    "(extend)" in waybar and told the user to pick the 'omarchy-cast' output at
+    the portal -- while the backend captured the real screen and no output by
+    that name existed anywhere.
+    """
+    made = []
+    states = []
+    capture = FakeCapture()
+    backend = CastBackend(
+        lambda d, s, e: states.append((s, e)),
+        Config(),
+        capture_factory=lambda cfg: capture,
+        chromecast_factory=lambda device: made.append(device) or FakeChromecast(),
+    )
+
+    with pytest.raises(BackendError, match="AirPlay-only"):
+        await backend.start(make_device(), EXTEND)
+
+    assert states[-1][0] is SessionState.FAILED
+    # Nothing was started: no capture, no receiver connection.
+    assert capture.started is False
+    assert made == []
+
+
+async def test_mirror_is_still_accepted_explicitly():
+    backend, states, capture, cast = make_backend()
+    await backend.start(make_device(), MIRROR)
+    assert states[-1][0] is SessionState.STREAMING
+    assert capture.started is True
 
 
 async def test_stop_without_a_session_is_safe():

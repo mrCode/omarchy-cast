@@ -55,8 +55,11 @@ rather than discovering it. The implementation must diff the monitor list.
 - Moving windows onto the virtual output automatically.
 - Remembering a per-device mode preference.
 - Position or layout control beyond "auto, to the right of existing outputs".
-- Extend for Chromecast is implemented but **not claimed to work**: the Cast
-  backend has never run against real hardware.
+- Extend for Chromecast. Extend is **AirPlay-only**. The Cast path goes through
+  the Default Media Receiver, which buffers a media stream for 1-3 seconds by
+  design; a display that lags that far behind the cursor is not usable as a
+  second display, so there is nothing there worth shipping. `CastBackend`
+  rejects `extend` rather than accepting the mode and mirroring instead.
 
 ## Architecture
 
@@ -116,9 +119,17 @@ failure, ready timeout, crash detection, daemon shutdown.
 
 ### Cast
 
-`CastBackend` gets the same mode parameter. Our own portal token is stored per
-mode, which is simpler than doubletake's case because we own the file. Shipped
-untested, consistent with how the Cast backend is already described.
+`CastBackend` takes the same `mode` parameter and **refuses `extend`**: it
+emits `FAILED` and raises `BackendError` with
+`extend is AirPlay-only; Chromecast buffers 1-3s and cannot serve as a second
+display`, matching how the AirPlay backend reports its own refusals.
+
+An earlier draft of this design had `CastBackend` accept the mode. It never
+used it: there was no virtual output on that path and the capture was of the
+real screen, so `--mode extend cast:1` produced a mirror while `status`,
+waybar and the menu all reported an extend and told the user to pick an
+`omarchy-cast` output that did not exist. Rejecting is the honest option, and
+the buffering makes the feature pointless there regardless.
 
 ## Data flow
 
