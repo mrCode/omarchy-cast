@@ -252,6 +252,63 @@ async def test_second_extend_is_rejected_while_one_is_active(fakes):
     assert "remove:omarchy-cast" in fakes
 
 
+# -- fix round 2: the rejection must have no side effects (Finding 1) --
+
+
+def make_recording_backend(count=2, **cfg):
+    """A backend over `count` ready children, exposing the procs it handed out."""
+    cfg.setdefault("airplay_auto_resolution", True)
+    procs = [FakeProc([READY + b"\n"]) for _ in range(count)]
+    handed = []
+    states = []
+
+    async def spawner(argv, env):
+        proc = procs.pop(0)
+        handed.append(proc)
+        return proc
+
+    backend = AirPlayBackend(
+        lambda d, s, e: states.append((s, e)),
+        Config(**cfg), spawner=spawner, ready_timeout=1.0,
+    )
+    return backend, states, handed
+
+
+async def test_a_rejected_extend_does_not_kill_the_requesting_device_mirror(fakes):
+    """The guard used to run *after* start()'s unconditional teardown, so the
+    request whose side effects had already fired was then refused: the user's
+    live mirror on B was killed and the error only mentioned A."""
+    backend, states, handed = make_recording_backend()
+    extending, mirroring = make_device(), make_device_b()
+    await backend.start(extending, EXTEND)
+    await backend.start(mirroring, MIRROR)
+    mirror_proc = handed[1]
+
+    with pytest.raises(Exception, match="already extending"):
+        await backend.start(mirroring, EXTEND)
+
+    # B's mirror survived the refusal, process and session both.
+    assert mirroring.id in backend._sessions
+    assert backend._sessions[mirroring.id].proc is mirror_proc
+    assert mirror_proc.terminated is False
+    # ...and A's output was never touched either.
+    assert "remove:omarchy-cast" not in fakes
+    assert states[-1][0] is SessionState.FAILED
+
+    await backend.shutdown()
+
+
+async def test_re_extending_the_same_device_is_not_rejected(fakes):
+    """Restarting the extend on the device that already owns it must still
+    work -- the guard is about a *second* device stealing the output."""
+    backend, states, _ = make_recording_backend()
+    device = make_device()
+    await backend.start(device, EXTEND)
+    await backend.start(device, EXTEND)
+    assert states[-1][0] is SessionState.STREAMING
+    await backend.shutdown()
+
+
 async def test_mirror_start_while_extend_is_active_leaves_the_output_alone(fakes):
     backend = make_two_device_backend()
     extend_device, mirror_device = make_device(), make_device_b()

@@ -239,22 +239,28 @@ class AirPlayBackend(Backend):
     # -- lifecycle ---------------------------------------------------------
 
     async def start(self, device: Device, mode: str = MIRROR) -> None:
-        await self._teardown(device.id)
-        self._emit(device, SessionState.CONNECTING)
-
+        # The guard runs first, before anything is torn down. It used to sit
+        # after the teardown below, so a refused request had already killed the
+        # requesting device's live mirror by the time it was told "already
+        # extending to <some other device>" -- a working cast destroyed, with
+        # nothing in the error to explain it.
+        #
+        # Only one virtual output is ever created, and cleanup_strays() would
+        # happily tear one down out from under its session, so a second extend
+        # is rejected rather than stealing the first one's output. Re-extending
+        # the device that already owns the output is a restart, not a steal, so
+        # it is allowed through.
         if mode == EXTEND:
-            # Only one virtual output is ever created, and cleanup_strays()
-            # below would happily tear down a live one out from under its
-            # session -- so a second extend is rejected outright, before
-            # touching hyprctl at all, rather than stealing the first one's
-            # output.
             existing = self._active_extend_session()
-            if existing is not None:
+            if existing is not None and existing.device.id != device.id:
                 message = (
                     f"already extending to {existing.device.name}; stop it first"
                 )
                 self._emit(device, SessionState.FAILED, message)
                 raise BackendError(message)
+
+        await self._teardown(device.id)
+        self._emit(device, SessionState.CONNECTING)
 
         virtual_name: str | None = None
         switched_display = False
