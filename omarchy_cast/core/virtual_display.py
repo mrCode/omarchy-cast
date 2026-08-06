@@ -44,6 +44,10 @@ def _is_virtual(name: str) -> bool:
     return name == VIRTUAL_NAME or name.startswith("HEADLESS")
 
 
+class _SetupFailed(Exception):
+    """Internal: the output exists but could not be made usable."""
+
+
 def create(runner=_run) -> str | None:
     """Create the virtual output and return the name Hyprland actually used."""
     if not available():
@@ -59,29 +63,45 @@ def create(runner=_run) -> str | None:
         log.warning("could not create a virtual output")
         return None
 
-    after = _monitor_names(runner)
-    if after is None:
+    # Past this point the output exists, so every failure path -- including an
+    # unexpected exception -- has to remove it again. Returning None while
+    # leaving it behind used to strand a stray 1920x1080 monitor on the desktop
+    # *and* tell the user no virtual display could be created: wrong on both
+    # counts, and a direct violation of the spec's "no output left behind".
+    #
+    # Until the post-create read succeeds the real name is unknown, so failures
+    # before then can only try the name that was requested.
+    name = VIRTUAL_NAME
+    try:
+        after = _monitor_names(runner)
+        if after is None:
+            log.warning("could not list monitors after creating a virtual output")
+            raise _SetupFailed
+
+        new = sorted(after - before)
+        if not new:
+            log.warning("hyprctl reported success but no new output appeared")
+            raise _SetupFailed
+
+        name = new[0]
+        if name != VIRTUAL_NAME:
+            # Naming is undocumented; if a Hyprland version drops it the name
+            # changes every run and the portal restore token breaks each time.
+            log.warning(
+                "requested output name %r but got %r; the portal will re-prompt "
+                "on every cast", VIRTUAL_NAME, name,
+            )
+
+        code, _ = runner(["hyprctl", "keyword", "monitor", CONFIG.format(name=name)])
+        if code != 0:
+            # Created but not scaled correctly: unusable as a desktop.
+            log.warning("could not configure geometry for virtual output %s", name)
+            raise _SetupFailed
+    except _SetupFailed:
+        remove(name, runner)
         return None
-
-    new = sorted(after - before)
-    if not new:
-        log.warning("hyprctl reported success but no new output appeared")
-        return None
-
-    name = new[0]
-    if name != VIRTUAL_NAME:
-        # Naming is undocumented; if a Hyprland version drops it the name
-        # changes every run and the portal restore token breaks each time.
-        log.warning(
-            "requested output name %r but got %r; the portal will re-prompt "
-            "on every cast", VIRTUAL_NAME, name,
-        )
-
-    code, _ = runner(["hyprctl", "keyword", "monitor", CONFIG.format(name=name)])
-    if code != 0:
-        # The output is half-configured: created but not scaled correctly. Remove
-        # it rather than leave a stray output on the user's desktop.
-        log.warning("could not configure geometry for virtual output %s", name)
+    except Exception:
+        log.warning("virtual output setup failed unexpectedly", exc_info=True)
         remove(name, runner)
         return None
 

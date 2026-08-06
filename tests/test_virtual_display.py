@@ -88,15 +88,60 @@ def test_create_returns_none_and_removes_output_when_geometry_fails():
     assert VIRTUAL_NAME not in runner.names
 
 
-def test_create_returns_none_when_no_new_monitor_appears():
-    class Silent(FakeRunner):
-        def __call__(self, argv):
-            self.calls.append(argv)
-            if "monitors" in argv:
-                return 0, monitors(*self.names)
-            return 0, "ok"
+class BlindAfterCreate(FakeRunner):
+    """The post-create `hyprctl monitors` read fails; the first one succeeded.
 
-    assert create(Silent()) is None
+    `mode="error"` is a non-zero exit, `mode="garbage"` unparseable JSON.
+    """
+
+    def __init__(self, mode="error", **kwargs):
+        super().__init__(**kwargs)
+        self._mode = mode
+        self._created = False
+
+    def __call__(self, argv):
+        if "monitors" in argv and self._created:
+            self.calls.append(argv)
+            return (1, "") if self._mode == "error" else (0, "not json")
+        result = super().__call__(argv)
+        if "create" in argv:
+            self._created = True
+        return result
+
+
+def test_create_removes_the_output_when_the_post_create_read_fails():
+    """`return None` here left the output that was just created in place: a
+    stray 1920x1080 monitor on the desktop, while start() reported that no
+    virtual display could be created."""
+    runner = BlindAfterCreate(mode="error")
+    assert create(runner) is None
+    assert runner.names == ["eDP-2"]
+
+
+def test_create_removes_the_output_when_the_post_create_read_is_unparseable():
+    runner = BlindAfterCreate(mode="garbage")
+    assert create(runner) is None
+    assert runner.names == ["eDP-2"]
+
+
+def test_create_returns_none_when_no_new_monitor_appears():
+    class Invisible(FakeRunner):
+        """hyprctl reports the create succeeded but never lists the output."""
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._visible = list(self.names)
+
+        def __call__(self, argv):
+            if "monitors" in argv:
+                self.calls.append(argv)
+                return 0, monitors(*self._visible)
+            return super().__call__(argv)
+
+    runner = Invisible()
+    assert create(runner) is None
+    # Nothing was left behind, even though the diff could not name it.
+    assert runner.names == ["eDP-2"]
 
 
 def test_remove_deletes_the_output():
