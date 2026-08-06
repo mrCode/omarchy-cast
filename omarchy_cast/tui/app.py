@@ -21,6 +21,7 @@ from textual.widgets import (
     Static,
 )
 
+from omarchy_cast.backends.creds import EXTEND, MIRROR
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.tui.model import (
     STATE_STYLE,
@@ -85,6 +86,7 @@ class CastApp(App):
 
     BINDINGS = [
         Binding("enter", "start", "Start", priority=True),
+        Binding("e", "extend", "Extend"),
         Binding("s", "stop", "Stop"),
         Binding("a", "add", "Add by address"),
         Binding("r", "refresh", "Refresh"),
@@ -177,6 +179,9 @@ class CastApp(App):
 
     # -- actions ---------------------------------------------------------
 
+    def action_extend(self) -> None:
+        self._start_in_mode(EXTEND)
+
     def action_start(self) -> None:
         """Synchronous on purpose.
 
@@ -184,6 +189,9 @@ class CastApp(App):
         presses all dispatch workers before the first marks us busy -- which is
         exactly how five stacked casts and a looping display happened.
         """
+        self._start_in_mode(MIRROR)
+
+    def _start_in_mode(self, mode: str) -> None:
         if self._busy:
             return
         row = self._selected()
@@ -195,14 +203,14 @@ class CastApp(App):
 
         self._busy = True
         self._set_summary(
-            f"connecting to {row['name']} (this takes a few seconds)...", "connecting"
+            f"{mode}ing to {row['name']} (this takes a few seconds)...", "connecting"
         )
-        self._start_worker(row["id"])
+        self._start_worker(row["id"], mode)
 
     @work(exclusive=True, group="control")
-    async def _start_worker(self, device_id: str) -> None:
+    async def _start_worker(self, device_id: str, mode: str = MIRROR) -> None:
         try:
-            await self._send("start", device_id=device_id)
+            await self._send("start", device_id=device_id, mode=mode)
         finally:
             self._busy = False
 

@@ -47,8 +47,12 @@ def render(sessions: list[dict]) -> dict:
 
     names = ", ".join(s["name"] for s in sessions)
     text = ICON_ACTIVE if len(sessions) == 1 else f"{ICON_ACTIVE} {len(sessions)}"
+    # Older daemons (or a stray emit) may omit "mode" entirely; skip the label
+    # rather than show a blank pair of parens.
+    modes = {s.get("mode") for s in sessions if s.get("mode")}
+    label = f" ({'/'.join(sorted(modes))})" if modes else ""
     return {
         "text": text,
-        "tooltip": f"Casting to {names}\n{HINT_ACTIVE}",
+        "tooltip": f"Casting to {names}{label}\n{HINT_ACTIVE}",
         "class": "streaming",
     }

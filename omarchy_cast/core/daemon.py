@@ -350,9 +350,12 @@ def main() -> None:
     )
 
     # A previous run may have died mid-cast with the display still switched.
-    from omarchy_cast.core import display
+    from omarchy_cast.core import display, virtual_display
     if display.restore_mode():
         log.info("restored a display mode left over from a previous session")
+    strays = virtual_display.cleanup_strays()
+    if strays:
+        log.info("removed %d virtual output(s) left over from a previous session", strays)
 
     config = load_config()
     daemon = Daemon(Discovery(), {}, idle_timeout=args.idle_timeout)

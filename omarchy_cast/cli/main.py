@@ -4,12 +4,14 @@ import json
 import subprocess
 import sys
 
-from omarchy_cast.backends.creds import MIRROR, MODES
+from omarchy_cast.backends.creds import EXTEND, MIRROR, MODES
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.cli.menu import (
     MANUAL_ENTRY,
+    MODE_ENTRIES,
     STOP_ENTRY,
     format_entries,
+    parse_mode,
     parse_selection,
 )
 from omarchy_cast.cli.waybar import render
@@ -127,7 +129,11 @@ def _run_menu() -> int:
         if device_id is None:
             return 0
 
-    result = asyncio.run(request("start", device_id=device_id))
+    mode = parse_mode(_walker(list(MODE_ENTRIES), "Mirror or extend?"))
+    if mode is None:
+        return 0
+
+    result = asyncio.run(request("start", device_id=device_id, mode=mode))
     if not result.get("ok"):
         message = result.get("error", "unknown error")
         _notify(message, urgent=True)
@@ -135,6 +141,11 @@ def _run_menu() -> int:
     warning = (result.get("data") or {}).get("warning")
     if warning:
         _notify(warning)
+    elif mode == EXTEND:
+        _notify(
+            "Extending — if the portal asks, share the 'omarchy-cast' output. "
+            "Right-click the waybar icon to stop."
+        )
     else:
         # The tooltip carries the same hint, but only on hover.
         _notify("Casting started — right-click the waybar icon to stop")
