@@ -88,6 +88,41 @@ asks for one.
 It is just another client of the same daemon, so the TUI, the CLI, the menu and
 the waybar indicator always agree.
 
+### Extend mode
+
+`--mode extend` casts a virtual 1920x1080 output instead of the screen. It
+shows up in Hyprland like any other monitor — drag a window onto it and that
+window appears on the receiver. The output disappears again as soon as the
+cast stops.
+
+```bash
+omarchy-cast start <id> --mode extend
+```
+
+The walker menu asks "Mirror or extend?" as a second prompt once you pick a
+receiver, and the TUI binds `e` to it directly (`Enter` still starts a normal
+mirror).
+
+Unlike mirror, extend does **not** change your display resolution. Mirror has
+to switch the panel to 1920x1080 because doubletake negotiates the stream at
+1080p and its capture path has no scaler (see [Known limitations](#known-limitations)
+below); a virtual output is already 1080p, so extend has nothing to switch.
+
+**The first-run portal prompt matters: choose the `omarchy-cast` output.**
+Picking the laptop panel instead silently produces a mirror, not an extend,
+and gives no error. Worse, that choice is stored as a portal restore token, so
+the wrong pick repeats on every extend afterward with no further prompt to
+catch it. If that happens, delete the stored token to force a fresh prompt:
+
+```bash
+rm ~/.local/state/omarchy-cast/doubletake-extend-credentials.json
+```
+
+Only one extend session runs at a time — starting a second is rejected with
+an `already extending to <device>; stop it first` error. This limit is
+specific to extend; mirroring to several receivers at once still works as
+before.
+
 ### When discovery finds nothing
 
 mDNS is not reliable. Some access points do not forward multicast between
