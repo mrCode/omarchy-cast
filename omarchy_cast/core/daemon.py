@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 
 from omarchy_cast.backends.base import Backend, BackendError
-from omarchy_cast.backends.creds import MODES
+from omarchy_cast.backends.creds import MIRROR, MODES
 from omarchy_cast.core.device import PROTOCOLS, Device
 from omarchy_cast.core.protocol import (
     decode_line,
@@ -68,8 +68,6 @@ class Daemon:
         self.sessions: dict[str, Session] = {}
         self.idle_timeout = idle_timeout
         self._notify = notifier or desktop_notify
-        # Set for the duration of a start so on_state can label the session.
-        self._pending_mode = "mirror"
         self._last_active = time.monotonic()
         self._stopping = asyncio.Event()
 
@@ -78,7 +76,11 @@ class Daemon:
     def on_state(self, device: Device, state: SessionState, error: str | None) -> None:
         session = self.sessions.get(device.id)
         if session is None:
-            session = Session(device, mode=self._pending_mode)
+            # _cmd_start registers the session (with its mode) before calling
+            # the backend, so reaching here means a stray emit for a device
+            # with no active start call -- e.g. a late crash emit after the
+            # session was already popped. Its mode is unknowable; default it.
+            session = Session(device, mode=MIRROR)
             self.sessions[device.id] = session
 
         try:
@@ -168,7 +170,7 @@ class Daemon:
 
     async def _cmd_start(self, request: dict) -> dict:
         device_id = request.get("device_id")
-        mode = request.get("mode", "mirror")
+        mode = request.get("mode", MIRROR)
         if mode not in MODES:
             return err(f"unknown mode: {mode}; expected one of {MODES}")
 
@@ -180,11 +182,23 @@ class Daemon:
         if backend is None:
             return err(f"no backend for protocol: {device.protocol}")
 
-        self._pending_mode = mode
+        # Register the session -- with its mode -- before calling the backend,
+        # rather than stashing the mode in shared daemon state. backend.start()
+        # can suspend before its first emit (AirPlay awaits a teardown that can
+        # take up to 2s), and the daemon serves clients concurrently, so a
+        # second in-flight start could otherwise overwrite a "pending mode"
+        # before the first device's session was ever created from it.
+        session = Session(device, mode=mode)
+        self.sessions[device.id] = session
         try:
             await backend.start(device, mode)
-        finally:
-            self._pending_mode = "mirror"
+        except Exception:
+            # A start that raises without the backend ever reaching a terminal
+            # state (FAILED emits pop the session themselves) must not leave a
+            # never-transitioned session behind to block a retry.
+            if self.sessions.get(device.id) is session and session.state is SessionState.IDLE:
+                self.sessions.pop(device.id, None)
+            raise
 
         session = self.sessions.get(device.id)
         data = {"state": str(session.state) if session else "idle", "mode": mode}

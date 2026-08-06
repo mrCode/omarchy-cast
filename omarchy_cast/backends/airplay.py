@@ -28,6 +28,7 @@ from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
+from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.core import display
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
@@ -222,7 +223,7 @@ class AirPlayBackend(Backend):
 
     # -- lifecycle ---------------------------------------------------------
 
-    async def start(self, device: Device, mode: str = "mirror") -> None:
+    async def start(self, device: Device, mode: str = MIRROR) -> None:
         await self._teardown(device.id)
         self._emit(device, SessionState.CONNECTING)
 

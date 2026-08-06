@@ -1,4 +1,5 @@
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
+from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import SessionState
 
@@ -23,7 +24,7 @@ class StubBackend(Backend):
         self._fail_with = fail_with
         self._needs_pin = needs_pin
 
-    async def start(self, device: Device, mode: str = "mirror") -> None:
+    async def start(self, device: Device, mode: str = MIRROR) -> None:
         self._emit(device, SessionState.CONNECTING)
         if self._fail_with:
             self._emit(device, SessionState.FAILED, self._fail_with)

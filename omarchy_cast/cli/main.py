@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 
+from omarchy_cast.backends.creds import MIRROR, MODES
 from omarchy_cast.cli.client import DaemonUnavailable, request
 from omarchy_cast.cli.menu import (
     MANUAL_ENTRY,
@@ -35,8 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--name", help="display name for a device added by address")
     start.add_argument(
         "--mode",
-        default="mirror",
-        choices=("mirror", "extend"),
+        default=MIRROR,
+        choices=MODES,
         help="mirror the screen (default) or extend onto a virtual display",
     )
 

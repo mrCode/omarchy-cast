@@ -1,5 +1,8 @@
+import asyncio
+
 import pytest
 
+from omarchy_cast.backends.base import BackendError
 from omarchy_cast.backends.creds import EXTEND, MIRROR
 from omarchy_cast.backends.stub import StubBackend
 from omarchy_cast.core.daemon import Daemon
@@ -85,6 +88,66 @@ async def test_backend_receives_the_mode():
     daemon.backends["cast"] = Recording(daemon.on_state)
     await daemon.handle({"cmd": "start", "device_id": "cast:1", "mode": "extend"})
     assert seen["mode"] == EXTEND
+
+
+async def test_concurrent_starts_do_not_cross_wires_on_mode():
+    """Regression test: mode must not travel through shared daemon state.
+
+    A backend that suspends before its first state emit (as AirPlayBackend
+    does -- it awaits a teardown of up to 2s before emitting CONNECTING) used
+    to leave a window where a second client's concurrent start could
+    overwrite a daemon-wide "pending mode" before the first device's session
+    was ever created from it, mislabelling the first device.
+    """
+    device_a = make_device(ident="1")
+    device_b = make_device(ident="2")
+    release = asyncio.Event()
+
+    class SlowStart(StubBackend):
+        async def start(self, device, mode=MIRROR):
+            if device.id == device_a.id:
+                await release.wait()
+            await super().start(device, mode)
+
+    daemon = Daemon(
+        FakeDiscovery([device_a, device_b]), {}, notifier=lambda m: None
+    )
+    daemon.backends["cast"] = SlowStart(daemon.on_state)
+
+    # device_a asks for extend and immediately blocks before its first emit.
+    task_a = asyncio.create_task(
+        daemon.handle({"cmd": "start", "device_id": device_a.id, "mode": "extend"})
+    )
+    await asyncio.sleep(0)  # let task_a run up to release.wait()
+
+    # device_b's start (mirror, the default) runs to completion while task_a
+    # is still suspended.
+    resp_b = await daemon.handle(
+        {"cmd": "start", "device_id": device_b.id, "mode": "mirror"}
+    )
+    assert resp_b["ok"] is True
+
+    release.set()
+    await task_a
+
+    assert daemon.sessions[device_a.id].mode == EXTEND
+    assert daemon.sessions[device_b.id].mode == MIRROR
+
+
+async def test_a_start_that_raises_before_any_emit_leaves_no_stale_session():
+    """The session created up front for the new mode must not linger if the
+    backend fails before ever transitioning it out of IDLE.
+    """
+
+    class ExplodesImmediately(StubBackend):
+        async def start(self, device, mode=MIRROR):
+            raise BackendError("boom before any emit")
+
+    daemon = make_daemon()
+    daemon.backends["cast"] = ExplodesImmediately(daemon.on_state)
+    resp = await daemon.handle({"cmd": "start", "device_id": "cast:1"})
+    assert resp["ok"] is False
+    assert daemon.sessions == {}
 
 
 def test_cli_passes_the_mode(monkeypatch):

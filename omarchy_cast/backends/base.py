@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
+from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import SessionState
 
@@ -32,7 +33,7 @@ class Backend(ABC):
         self._on_state(device, state, error)
 
     @abstractmethod
-    async def start(self, device: Device, mode: str = "mirror") -> None: ...
+    async def start(self, device: Device, mode: str = MIRROR) -> None: ...
 
     @abstractmethod
     async def stop(self, device: Device) -> None: ...

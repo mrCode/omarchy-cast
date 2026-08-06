@@ -1,6 +1,7 @@
 import time
 from enum import StrEnum
 
+from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.core.device import Device
 
 
@@ -34,7 +35,7 @@ class InvalidTransition(Exception):
 
 
 class Session:
-    def __init__(self, device: Device, mode: str = "mirror") -> None:
+    def __init__(self, device: Device, mode: str = MIRROR) -> None:
         self.device = device
         self.mode = mode
         self.state = SessionState.IDLE

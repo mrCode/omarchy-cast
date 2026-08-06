@@ -3,6 +3,7 @@ import logging
 import uuid as uuid_module
 
 from omarchy_cast.backends.base import Backend, BackendError, StateCallback
+from omarchy_cast.backends.creds import MIRROR
 from omarchy_cast.capture.encoder import (
     NoEncoderAvailable,
     probe_available,
@@ -111,7 +112,7 @@ class CastBackend(Backend):
         self._capture = None
         self._cast = None
 
-    async def start(self, device: Device, mode: str = "mirror") -> None:
+    async def start(self, device: Device, mode: str = MIRROR) -> None:
         self._emit(device, SessionState.CONNECTING)
         self._capture = self._capture_factory(self._config)
 
