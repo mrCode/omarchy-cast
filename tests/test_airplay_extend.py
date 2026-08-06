@@ -446,3 +446,59 @@ async def test_mirror_start_while_extend_is_active_leaves_the_output_alone(fakes
 
     await backend.shutdown()
     assert "remove:omarchy-cast" in fakes
+
+
+async def test_a_failed_extend_restart_does_not_resurrect_the_dead_session(
+    fakes, monkeypatch
+):
+    """Guards the classification of the virtual-display failure, not its message.
+
+    It is the one failure in start() that READS like a refusal -- "could not
+    create a virtual display" sounds like the backend declined. It is not: it
+    happens after _teardown has already killed the child and removed the
+    output, so nothing survives it. Raising BackendRefused there would tell the
+    daemon to restore the session record it displaced, putting a green
+    "streaming" indicator on the bar for an extend that is gone.
+
+    The whole suite stays green under that one-word change, which is why this
+    test exists: it asserts through the daemon, where the consequence lives.
+    """
+    from omarchy_cast.core.daemon import Daemon
+
+    class FakeDiscovery:
+        def __init__(self, devices):
+            self._devices = list(devices)
+
+        def devices(self):
+            return self._devices
+
+        def add(self, device):
+            self._devices.append(device)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    device = make_device()
+    proc = FakeProc([READY + b"\n"])
+    backend, _, _ = make_backend(proc)
+    daemon = Daemon(FakeDiscovery([device]), {}, notifier=lambda m: None)
+    backend._on_state = daemon.on_state
+    daemon.backends["airplay"] = backend
+
+    await daemon.handle({"cmd": "start", "device_id": device.id, "mode": "extend"})
+    assert daemon.sessions[device.id].state is SessionState.STREAMING
+
+    # The user restarts the extend; this time the output cannot be recreated.
+    monkeypatch.setattr(airplay_mod.virtual_display, "create", lambda *a, **k: None)
+    resp = await daemon.handle(
+        {"cmd": "start", "device_id": device.id, "mode": "extend"}
+    )
+
+    assert resp["ok"] is False
+    assert "could not create a virtual display" in resp["error"]
+    assert daemon.sessions == {}
+    assert (await daemon.handle({"cmd": "status"}))["data"]["sessions"] == []
+    await backend.shutdown()
