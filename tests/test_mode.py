@@ -206,6 +206,43 @@ async def test_stop_all_skips_sessions_in_the_pre_emit_window():
     await task
 
 
+async def test_status_omits_sessions_in_the_pre_emit_window():
+    """_cmd_stop and _cmd_pin were taught that an IDLE session is not real yet;
+    _cmd_status was not, and waybar's render() has no idle branch, so such a
+    session fell past `failed` and `connecting` into the streaming return. For
+    up to 2s after restarting an AirPlay cast on a device that already had a
+    session, waybar showed a green streaming indicator offering
+    "Stop casting (dev1)" -- which _cmd_stop then refused with an error.
+    """
+    from omarchy_cast.cli.waybar import render
+
+    device = make_device()
+    release = asyncio.Event()
+
+    class SlowStart(StubBackend):
+        async def start(self, device, mode=MIRROR):
+            await release.wait()
+            await super().start(device, mode)
+
+    daemon = make_daemon()
+    daemon.backends["cast"] = SlowStart(daemon.on_state)
+
+    task = asyncio.create_task(daemon.handle({"cmd": "start", "device_id": device.id}))
+    await asyncio.sleep(0)  # let the start register its session and suspend
+
+    resp = await daemon.handle({"cmd": "status"})
+    assert resp["data"]["sessions"] == []
+    assert render(resp["data"]["sessions"])["class"] != "streaming"
+
+    release.set()
+    await task
+
+    # Once the backend has actually emitted, it is reported again.
+    resp = await daemon.handle({"cmd": "status"})
+    assert [s["state"] for s in resp["data"]["sessions"]] == ["streaming"]
+    assert render(resp["data"]["sessions"])["class"] == "streaming"
+
+
 async def test_pin_during_the_pre_emit_window_reports_no_pending_session():
     """Same shape as the stop regression: submitting a PIN to a session whose
     backend has not started yet must fail rather than silently do nothing.

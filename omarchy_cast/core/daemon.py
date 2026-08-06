@@ -136,6 +136,13 @@ class Daemon:
         return ok({"devices": [_device_dict(d) for d in self.discovery.devices()]})
 
     async def _cmd_status(self, request: dict) -> dict:
+        # IDLE is filtered out for the same reason _cmd_stop and _cmd_pin
+        # refuse it: _cmd_start registers the session before calling the
+        # backend, so an IDLE session is one whose backend has not emitted
+        # anything yet (AirPlay's pre-start teardown can sit there for 2s).
+        # Reporting it made waybar -- which has no idle branch and falls
+        # through to its streaming return -- show a green streaming indicator
+        # offering a Stop that _cmd_stop then refused.
         sessions = [
             {
                 "id": s.device.id,
@@ -146,6 +153,7 @@ class Daemon:
                 "error": s.error,
             }
             for s in self.sessions.values()
+            if s.state is not SessionState.IDLE
         ]
         return ok({"sessions": sessions})
 
