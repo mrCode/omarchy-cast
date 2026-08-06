@@ -83,6 +83,9 @@ class Discovery:
         self._zeroconf = zeroconf or Zeroconf()
         self._owns_zeroconf = zeroconf is None
         self._devices: dict[str, Device] = {}
+        # Ids registered by add() rather than by mDNS. Tracked so devices()
+        # can fold a manual entry away once the same receiver is discovered.
+        self._manual: set[str] = set()
         self._lock = threading.Lock()
         self._browser: ServiceBrowser | None = None
 
@@ -103,13 +106,38 @@ class Discovery:
             self._zeroconf.close()
 
     def devices(self) -> list[Device]:
+        """Every known receiver, with manual duplicates folded away.
+
+        A receiver added by address is keyed on that address; the same box
+        found over mDNS is keyed on its device id. Nothing connected the two,
+        so one Apple TV appeared in the menu twice -- once as a bare IP, once
+        with its real name and model.
+
+        The discovered record wins: it carries the model, and its id survives
+        the address changing under DHCP. The manual entry is only *hidden*,
+        never deleted -- discovery on the network that motivated all this was
+        intermittent, so the fallback has to reappear the moment mDNS loses
+        the receiver again.
+        """
         with self._lock:
-            return sorted(self._devices.values(), key=lambda d: (d.protocol, d.name))
+            found = {
+                (d.protocol, d.address)
+                for device_id, d in self._devices.items()
+                if device_id not in self._manual
+            }
+            visible = [
+                d
+                for device_id, d in self._devices.items()
+                if device_id not in self._manual
+                or (d.protocol, d.address) not in found
+            ]
+            return sorted(visible, key=lambda d: (d.protocol, d.name))
 
     def add(self, device: Device) -> None:
         """Register a device found by means other than mDNS (e.g. a raw address)."""
         with self._lock:
             self._devices[device.id] = device
+            self._manual.add(device.id)
 
     def remove(self, device_id: str) -> bool:
         """Drop a device from the live list.
@@ -118,6 +146,7 @@ class Discovery:
         re-added the moment it announces again, which is correct.
         """
         with self._lock:
+            self._manual.discard(device_id)
             return self._devices.pop(device_id, None) is not None
 
     # zeroconf calls this with `zeroconf` as a keyword argument.
@@ -129,6 +158,12 @@ class Discovery:
         if state_change is ServiceStateChange.Removed:
             with self._lock:
                 for key, device in list(self._devices.items()):
+                    # Manual entries are exempt. This matches on NAME, and a
+                    # receiver added by address carries the same name as its
+                    # mDNS record -- so losing the announcement used to delete
+                    # the very fallback that exists for announcements stopping.
+                    if key in self._manual:
+                        continue
                     if device.name == _short_name(name):
                         del self._devices[key]
             return
