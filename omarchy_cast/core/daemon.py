@@ -452,8 +452,20 @@ def main() -> None:
         ],
     )
 
+    from omarchy_cast.core import display, singleton, virtual_display
+
+    # Before ANYTHING that touches shared state. The cleanup below cannot tell
+    # a leftover virtual output from one carrying a cast that is streaming
+    # right now in another daemon -- it removed the live one, and the cast died
+    # with nothing in its own daemon's log, because the removal happened in a
+    # different process. The client spawns a daemon whenever the socket is
+    # briefly absent, so this is reachable in ordinary use.
+    lock = singleton.acquire()
+    if lock is None:
+        log.info("another daemon is already running; exiting")
+        return
+
     # A previous run may have died mid-cast with the display still switched.
-    from omarchy_cast.core import display, virtual_display
     if display.restore_mode():
         log.info("restored a display mode left over from a previous session")
     strays = virtual_display.cleanup_strays()
@@ -465,7 +477,12 @@ def main() -> None:
     daemon.backends["airplay"] = AirPlayBackend(daemon.on_state, config)
     daemon.backends["cast"] = CastBackend(daemon.on_state, config)
 
-    asyncio.run(daemon.serve())
+    try:
+        asyncio.run(daemon.serve())
+    finally:
+        # Held until the very end; releasing it earlier would let a second
+        # daemon start and sweep a live cast's virtual output.
+        lock.close()
 
 
 if __name__ == "__main__":
