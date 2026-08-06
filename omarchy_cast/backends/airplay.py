@@ -134,6 +134,11 @@ class _Session:
         # STREAMING emit.
         self.streaming = False
         self.pump: asyncio.Task | None = None
+        # What this session's start() set up in the environment, so teardown
+        # undoes exactly what this session caused and never a sibling
+        # session's -- see AirPlayBackend._restore_environment.
+        self.virtual: str | None = None
+        self.switched_display = False
 
     def absorb(self, chunk: bytes) -> None:
         self.output += chunk.decode("utf-8", "replace")
@@ -162,9 +167,12 @@ class AirPlayBackend(Backend):
         self._config = config
         self._spawn = spawner or subprocess_spawner
         self._ready_timeout = ready_timeout
+        # Extend is limited to one session at a time (see start()); mirror can
+        # run several concurrently. What each session set up in the
+        # environment lives on the _Session itself, not here -- a
+        # backend-scalar "the" virtual output or "the" switched display broke
+        # as soon as mirror and extend could be active together.
         self._sessions: dict[str, _Session] = {}
-        # Name of the virtual output while an extend session is running.
-        self._virtual: str | None = None
 
     # -- process construction --------------------------------------------
 
@@ -235,29 +243,57 @@ class AirPlayBackend(Backend):
         self._emit(device, SessionState.CONNECTING)
 
         if mode == EXTEND:
+            # Only one virtual output is ever created, and cleanup_strays()
+            # below would happily tear down a live one out from under its
+            # session -- so a second extend is rejected outright, before
+            # touching hyprctl at all, rather than stealing the first one's
+            # output.
+            existing = self._active_extend_session()
+            if existing is not None:
+                message = (
+                    f"already extending to {existing.device.name}; stop it first"
+                )
+                self._emit(device, SessionState.FAILED, message)
+                raise BackendError(message)
+
+        virtual_name: str | None = None
+        switched_display = False
+
+        if mode == EXTEND:
             virtual_display.cleanup_strays()
-            name = virtual_display.create()
-            if name is None:
+            virtual_name = virtual_display.create()
+            if virtual_name is None:
                 message = (
                     "could not create a virtual display for extend mode; "
                     "is this Hyprland with hyprctl available?"
                 )
                 self._emit(device, SessionState.FAILED, message)
                 raise BackendError(message)
-            self._virtual = name
         elif self._config.airplay_auto_resolution:
             # Mirror only: the receiver rejects a stream whose SPS does not
             # match the negotiated 1920x1080. A virtual output is already 1080p.
             display.apply_stream_mode()
+            switched_display = True
 
         try:
             proc = await self._spawn(self.build_argv(device, mode), self.daemon_env())
         except FileNotFoundError as exc:
+            # No session was ever created to hang this cleanup off of, so it
+            # has to happen here or a spawn failure strands a real monitor
+            # (extend) or leaves the panel stuck at 1080p (mirror) forever.
+            self._undo_setup(virtual_name)
             message = f"{BIN} is not installed; install it with: yay -S doubletake"
             self._emit(device, SessionState.FAILED, message)
             raise BackendError(message) from exc
+        except Exception as exc:
+            self._undo_setup(virtual_name)
+            message = f"{BIN} failed to start: {exc}"
+            self._emit(device, SessionState.FAILED, message)
+            raise
 
         session = _Session(device, proc)
+        session.virtual = virtual_name
+        session.switched_display = switched_display
         self._sessions[device.id] = session
         session.pump = asyncio.create_task(self._pump(session))
 
@@ -345,7 +381,7 @@ class AirPlayBackend(Backend):
             # _await_ready owns the outcome.
             if session.streaming and not session.stopping:
                 self._sessions.pop(session.device.id, None)
-                self._restore_environment()
+                self._restore_environment(session)
                 self._emit(
                     session.device,
                     SessionState.FAILED,
@@ -357,19 +393,43 @@ class AirPlayBackend(Backend):
         await self._teardown(session.device.id)
         self._emit(session.device, SessionState.FAILED, message)
 
-    def _restore_environment(self) -> None:
-        if self._sessions:
-            return
-        if self._virtual is not None:
-            virtual_display.remove(self._virtual)
-            self._virtual = None
-        elif self._config.airplay_auto_resolution:
+    def _active_extend_session(self) -> _Session | None:
+        return next(
+            (s for s in self._sessions.values() if s.virtual is not None), None
+        )
+
+    def _any_session_needs_display(self) -> bool:
+        return any(s.switched_display for s in self._sessions.values())
+
+    def _maybe_restore_display(self) -> None:
+        # Safe to call whenever: restore_mode() is a no-op when nothing was
+        # ever switched. Gated on whether any *remaining* session still needs
+        # 1920x1080 -- a live mirror session must not have the panel pulled
+        # out from under it just because some other session tore down.
+        if self._config.airplay_auto_resolution and not self._any_session_needs_display():
             display.restore_mode()
+
+    def _undo_setup(self, virtual_name: str | None) -> None:
+        """Undo environment changes from a start() that failed before a
+        session existed to hang them off of (see the spawn try/except)."""
+        if virtual_name is not None:
+            virtual_display.remove(virtual_name)
+        self._maybe_restore_display()
+
+    def _restore_environment(self, session: _Session) -> None:
+        """Undo exactly what `session` set up in start() -- never a sibling
+        session's environment, since mirror and extend can be active at once."""
+        if session.virtual is not None:
+            virtual_display.remove(session.virtual)
+        self._maybe_restore_display()
 
     async def _teardown(self, device_id: str) -> None:
         session = self._sessions.pop(device_id, None)
         if session is None:
-            self._restore_environment()
+            # This device never had a session, but a crash on a previous run
+            # can still have left the display switched (see
+            # display.restore_mode's docstring); clear that regardless.
+            self._maybe_restore_display()
             return
         session.stopping = True
         session.proc.terminate()
@@ -381,4 +441,4 @@ class AirPlayBackend(Backend):
                 await asyncio.wait_for(asyncio.shield(session.pump), timeout=2.0)
             except (asyncio.CancelledError, TimeoutError, Exception):
                 pass
-        self._restore_environment()
+        self._restore_environment(session)

@@ -17,6 +17,13 @@ def make_device():
     )
 
 
+def make_device_b():
+    return Device(
+        id="airplay:BB", name="Bedroom", address="192.168.1.78",
+        port=7000, protocol="airplay",
+    )
+
+
 @pytest.fixture
 def fakes(monkeypatch, tmp_path):
     """No hyprctl, no display changes, no real credentials."""
@@ -140,3 +147,121 @@ async def test_extend_fails_clearly_when_the_output_cannot_be_created(
     with pytest.raises(Exception, match="virtual display"):
         await backend.start(make_device(), EXTEND)
     assert states[-1][0] is SessionState.FAILED
+
+
+# -- fix round 1: spawn failing before a session exists (Finding 1) ----
+
+
+def make_raising_backend(exc, **cfg):
+    """A backend whose spawner always raises, before any session is created."""
+    cfg.setdefault("airplay_auto_resolution", True)
+    states = []
+
+    async def spawner(argv, env):
+        raise exc
+
+    backend = AirPlayBackend(
+        lambda d, s, e: states.append((s, e)),
+        Config(**cfg), spawner=spawner, ready_timeout=1.0,
+    )
+    return backend, states
+
+
+async def test_extend_removes_the_output_when_spawn_itself_raises(fakes):
+    """The session never got far enough to be registered, so nothing else
+    would ever clean this up -- the failure path itself must."""
+    backend, states = make_raising_backend(RuntimeError("boom"))
+    with pytest.raises(Exception):
+        await backend.start(make_device(), EXTEND)
+    assert "remove:omarchy-cast" in fakes
+    assert states[-1][0] is SessionState.FAILED
+
+
+async def test_mirror_restores_the_display_when_spawn_itself_raises(fakes):
+    backend, states = make_raising_backend(RuntimeError("boom"))
+    with pytest.raises(Exception):
+        await backend.start(make_device(), MIRROR)
+    assert "restore-display" in fakes
+    assert states[-1][0] is SessionState.FAILED
+
+
+# -- fix round 1: independent teardown for co-existing sessions (Finding 2) --
+
+
+def make_two_device_backend(**cfg):
+    cfg.setdefault("airplay_auto_resolution", True)
+    procs = [FakeProc([READY + b"\n"]), FakeProc([READY + b"\n"])]
+
+    async def spawner(argv, env):
+        return procs.pop(0)
+
+    backend = AirPlayBackend(
+        lambda d, s, e: None, Config(**cfg), spawner=spawner, ready_timeout=1.0,
+    )
+    return backend
+
+
+async def test_teardown_mirror_then_extend_restores_both(fakes):
+    backend = make_two_device_backend()
+    mirror_device, extend_device = make_device(), make_device_b()
+    await backend.start(mirror_device, MIRROR)
+    await backend.start(extend_device, EXTEND)
+
+    # Starting already emits its own "clear stale state" restore-display call
+    # (see test_start_switches_the_display_and_stop_restores_it); drop that
+    # noise so the assertions below are about teardown, not startup.
+    fakes.clear()
+    await backend.stop(mirror_device)
+    await backend.stop(extend_device)
+
+    assert "restore-display" in fakes
+    assert "remove:omarchy-cast" in fakes
+
+
+async def test_teardown_extend_then_mirror_restores_both(fakes):
+    backend = make_two_device_backend()
+    mirror_device, extend_device = make_device(), make_device_b()
+    await backend.start(mirror_device, MIRROR)
+    await backend.start(extend_device, EXTEND)
+
+    fakes.clear()
+    await backend.stop(extend_device)
+    await backend.stop(mirror_device)
+
+    assert "restore-display" in fakes
+    assert "remove:omarchy-cast" in fakes
+
+
+# -- fix round 1: extend limited to one session at a time (Finding 3) --
+
+
+async def test_second_extend_is_rejected_while_one_is_active(fakes):
+    proc = FakeProc([READY + b"\n"])
+    backend, states, _ = make_backend(proc)
+    first, second = make_device(), make_device_b()
+    await backend.start(first, EXTEND)
+
+    with pytest.raises(Exception, match="already extending"):
+        await backend.start(second, EXTEND)
+
+    # Rejected before touching hyprctl again: the first output is untouched.
+    assert "remove:omarchy-cast" not in fakes
+    assert states[-1][0] is SessionState.FAILED
+
+    # The first session is still alive and still cleans up normally.
+    await backend.stop(first)
+    assert "remove:omarchy-cast" in fakes
+
+
+async def test_mirror_start_while_extend_is_active_leaves_the_output_alone(fakes):
+    backend = make_two_device_backend()
+    extend_device, mirror_device = make_device(), make_device_b()
+
+    await backend.start(extend_device, EXTEND)
+    await backend.start(mirror_device, MIRROR)
+
+    assert "remove:omarchy-cast" not in fakes
+    assert "switch-display" in fakes
+
+    await backend.shutdown()
+    assert "remove:omarchy-cast" in fakes
