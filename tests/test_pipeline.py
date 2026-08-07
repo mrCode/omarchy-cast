@@ -3,9 +3,11 @@ from omarchy_cast.core.config import Config
 
 
 def test_pipeline_includes_node_id_and_fd():
+    """`path=` was asserted here until it turned out GStreamer 1.28 ignores it
+    -- this test passed while the pipeline captured the webcam instead."""
     desc = build_pipeline_description(42, 7, "vaapi", Config())
     assert "pipewiresrc" in desc
-    assert "path=42" in desc
+    assert "target-object=42" in desc
     assert "fd=7" in desc
 
 
@@ -99,3 +101,31 @@ def test_videorate_runs_after_videoconvert():
     desc = build_pipeline_description(79, 11, "x264", Config())
 
     assert desc.index("videoconvert") < desc.index("videorate")
+
+
+# -- SECURITY: the source must never be substitutable ------------------------
+
+
+def test_autoconnect_is_disabled():
+    """With autoconnect on, pipewiresrc "finds a peer" when it cannot use the
+    requested node -- and it picked the built-in WEBCAM, which was then encoded
+    and streamed to a television while the app reported screen mirroring.
+    Verified by PipeWire link tracing: portal gave node 87, pipeline linked to
+    node 60 with media.role=Camera."""
+    desc = build_pipeline_description(87, 11, "x264", Config())
+
+    assert "autoconnect=false" in desc
+
+
+def test_the_node_is_selected_with_target_object_not_the_deprecated_path():
+    """`path` is deprecated in GStreamer 1.28 and silently ignored, which is
+    how the requested node came to be disregarded in the first place."""
+    desc = build_pipeline_description(87, 11, "x264", Config())
+
+    assert "target-object=87" in desc
+    assert "path=" not in desc
+
+
+def test_the_portal_fd_is_still_passed():
+    """Without it the source is not scoped to the portal session at all."""
+    assert "fd=11" in build_pipeline_description(87, 11, "x264", Config())

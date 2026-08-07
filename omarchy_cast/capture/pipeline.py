@@ -44,7 +44,22 @@ def build_pipeline_description(node_id: int, fd: int, encoder: str, config: Conf
     """
     element = gst_element_for(encoder)
     return (
-        f"pipewiresrc path={node_id} fd={fd} do-timestamp=true ! "
+        # SECURITY: `target-object`, not `path`, and autoconnect MUST stay off.
+        #
+        # `path` is deprecated in GStreamer 1.28 and silently ignored. With
+        # autoconnect left at its default of true, pipewiresrc then "finds a
+        # peer to connect to" on its own -- and picked the built-in WEBCAM.
+        # Verified by tracing PipeWire links: the portal handed us node 87 and
+        # the pipeline linked to node 60, media.role=Camera. The user's camera
+        # was encoded and streamed to a television, while the app reported it
+        # was mirroring the screen.
+        #
+        # autoconnect=false removes the fallback entirely: if the requested
+        # node cannot be used the pipeline fails, which is the only acceptable
+        # outcome. Never reintroduce a source that can silently substitute a
+        # different capture device.
+        f"pipewiresrc target-object={node_id} autoconnect=false fd={fd} "
+        f"do-timestamp=true ! "
         f"videoconvert ! "
         f"videorate max-rate={config.fps} ! "
         f"{element} {encoder_args(encoder, config)} ! "
