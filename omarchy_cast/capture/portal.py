@@ -1,14 +1,32 @@
 """xdg-desktop-portal ScreenCast session handling.
 
-The D-Bus flow here was validated end to end against xdg-desktop-portal-hyprland:
 CreateSession -> SelectSources -> Start -> OpenPipeWireRemote, with a stored
-restore token suppressing the second prompt. See docs/prototypes/capture_test.py.
+restore token suppressing the second prompt.
+
+The portal answers over D-Bus *signals*, and Gio dispatches those through the
+GLib main context -- which only runs if something iterates it. The prototype
+this was ported from ran a GLib main loop; the asyncio port dropped it and
+nothing replaced it, so the Response signal was never delivered. Every Cast
+start hung at CreateSession until the 120s timeout, which is to say Chromecast
+could not work at all. It went unnoticed because every test here stubs the
+portal, so the suite stayed green.
+
+`glib_pump()` is the missing piece: it drains GLib from the asyncio loop for
+the duration of the handshake.
 """
 
 import asyncio
+import contextlib
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+# How often to drain GLib while waiting on the portal. This runs only during a
+# handshake, never in the background, so the poll is not an ongoing cost.
+GLIB_POLL = 0.01
 
 BUS_NAME = "org.freedesktop.portal.Desktop"
 OBJECT_PATH = "/org/freedesktop/portal/desktop"
@@ -62,6 +80,41 @@ def parse_streams(streams) -> int:
     raise PortalError("portal returned no stream; screen capture was cancelled")
 
 
+@contextlib.asynccontextmanager
+async def glib_pump():
+    """Dispatch GLib main-context events while the block runs.
+
+    Yields the pump task so callers (and tests) can see it stop. Iterating the
+    context from the asyncio loop keeps everything on one thread, so the
+    portal callbacks resolve futures on the loop that is awaiting them.
+    """
+    import gi
+
+    gi.require_version("Gio", "2.0")
+    from gi.repository import GLib
+
+    context = GLib.MainContext.default()
+
+    async def pump() -> None:
+        while True:
+            # A callback that raises must not kill the pump: the portal
+            # handshake would then hang exactly as it did before this existed.
+            try:
+                while context.pending():
+                    context.iteration(False)
+            except Exception:
+                log.debug("GLib callback raised during pump", exc_info=True)
+            await asyncio.sleep(GLIB_POLL)
+
+    task = asyncio.create_task(pump())
+    try:
+        yield task
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 async def open_screencast() -> PortalSession:
     """Open a ScreenCast session and return the PipeWire fd and node id.
 
@@ -106,26 +159,34 @@ async def open_screencast() -> PortalSession:
         return await asyncio.wait_for(pending, timeout=PORTAL_TIMEOUT)
 
     try:
-        payload = await call(
-            "CreateSession",
-            GLib.Variant("(a{sv})", ({
-                "session_handle_token": GLib.Variant("s", "omarchycast"),
-            },)),
-        )
-        session_handle = payload["session_handle"]
+        # Every await below is waiting on a D-Bus signal that GLib will only
+        # deliver while its main context is being iterated. Without this the
+        # first call never returns and the whole handshake times out.
+        async with glib_pump():
+            payload = await call(
+                "CreateSession",
+                GLib.Variant("(a{sv})", ({
+                    "session_handle_token": GLib.Variant("s", "omarchycast"),
+                },)),
+            )
+            session_handle = payload["session_handle"]
 
-        options = {
-            "types": GLib.Variant("u", SOURCE_TYPE_MONITOR),
-            "multiple": GLib.Variant("b", False),
-            "cursor_mode": GLib.Variant("u", CURSOR_MODE_EMBEDDED),
-            "persist_mode": GLib.Variant("u", PERSIST_MODE_PERSISTENT),
-        }
-        stored = load_restore_token()
-        if stored:
-            options["restore_token"] = GLib.Variant("s", stored)
+            options = {
+                "types": GLib.Variant("u", SOURCE_TYPE_MONITOR),
+                "multiple": GLib.Variant("b", False),
+                "cursor_mode": GLib.Variant("u", CURSOR_MODE_EMBEDDED),
+                "persist_mode": GLib.Variant("u", PERSIST_MODE_PERSISTENT),
+            }
+            stored = load_restore_token()
+            if stored:
+                options["restore_token"] = GLib.Variant("s", stored)
 
-        await call("SelectSources", GLib.Variant("(oa{sv})", (session_handle, options)))
-        payload = await call("Start", GLib.Variant("(osa{sv})", (session_handle, "", {})))
+            await call(
+                "SelectSources", GLib.Variant("(oa{sv})", (session_handle, options))
+            )
+            payload = await call(
+                "Start", GLib.Variant("(osa{sv})", (session_handle, "", {}))
+            )
     except TimeoutError as exc:
         raise PortalError(
             f"portal did not respond within {PORTAL_TIMEOUT:.0f}s"

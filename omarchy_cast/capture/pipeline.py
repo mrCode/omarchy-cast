@@ -24,11 +24,29 @@ def encoder_args(encoder: str, config: Config) -> str:
 
 
 def build_pipeline_description(node_id: int, fd: int, encoder: str, config: Config) -> str:
+    """Build the capture pipeline.
+
+    Note what is NOT here: a `video/x-raw,framerate=N/1` capsfilter on the
+    source. Constraining the portal stream's format that way makes pipewiresrc
+    fail negotiation outright --
+
+        stream error: error set output format: -22 (Invalid argument)
+
+    -- and the pipeline then produces no buffers at all, silently. The Cast
+    session still reported STREAMING, the receiver showed a title and a
+    buffering bar, and nothing ever played. Measured against a live Hyprland
+    capture: with the capsfilter, 0 chunks; without it, ~45 chunks and ~3 MB in
+    five seconds, on both VAAPI and x264.
+
+    `videorate max-rate` caps the framerate as a property instead, which needs
+    no capsfilter and leaves negotiation to the source. It sits after
+    videoconvert so it never constrains the source pad.
+    """
     element = gst_element_for(encoder)
     return (
         f"pipewiresrc path={node_id} fd={fd} do-timestamp=true ! "
-        f"videorate ! video/x-raw,framerate={config.fps}/1 ! "
         f"videoconvert ! "
+        f"videorate max-rate={config.fps} ! "
         f"{element} {encoder_args(encoder, config)} ! "
         f"h264parse config-interval=1 ! "
         f"matroskamux streamable=true ! "

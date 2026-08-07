@@ -50,7 +50,9 @@ def test_pipeline_muxes_streamable_matroska():
 
 
 def test_pipeline_honours_configured_fps():
-    assert "framerate=60/1" in build_pipeline_description(1, 2, "vaapi", Config(fps=60))
+    """As a videorate property, not a capsfilter -- see the negotiation tests
+    below for why the capsfilter form produced no video at all."""
+    assert "max-rate=60" in build_pipeline_description(1, 2, "vaapi", Config(fps=60))
 
 
 def test_h264parse_repeats_headers():
@@ -58,10 +60,42 @@ def test_h264parse_repeats_headers():
     assert "config-interval=1" in build_pipeline_description(1, 2, "vaapi", Config())
 
 
-def test_matches_the_verified_prototype_shape():
-    """This exact pipeline produced 197 decodable frames at 2560x1600."""
+def test_element_order():
+    """Previously asserted a "verified prototype shape" with videorate ahead of
+    videoconvert. That shape produced 0 buffers in production -- the prototype
+    it was copied from evidently differed. Measured against a live capture, the
+    order below yields ~45 chunks in five seconds."""
     desc = build_pipeline_description(72, 8, "vaapi", Config())
-    order = ["pipewiresrc", "videorate", "videoconvert", "vah264enc",
+    order = ["pipewiresrc", "videoconvert", "videorate", "vah264enc",
              "h264parse", "matroskamux", "appsink"]
     positions = [desc.index(part) for part in order]
     assert positions == sorted(positions)
+
+
+# -- the capsfilter that stopped all video ----------------------------------
+
+
+def test_the_source_is_not_constrained_by_a_framerate_capsfilter():
+    """A `video/x-raw,framerate=N/1` capsfilter makes pipewiresrc fail
+    negotiation with `set output format: -22` and produce no buffers at all,
+    silently -- while the session still reports STREAMING. Measured on a live
+    Hyprland capture: 0 chunks with it, ~45 chunks without."""
+    desc = build_pipeline_description(79, 11, "x264", Config())
+
+    assert "video/x-raw,framerate" not in desc
+    assert "video/x-raw" not in desc
+
+
+def test_the_framerate_is_still_applied_as_a_property():
+    """Dropping the capsfilter must not silently drop the fps setting."""
+    desc = build_pipeline_description(79, 11, "x264", Config(fps=24))
+
+    assert "videorate max-rate=24" in desc
+
+
+def test_videorate_runs_after_videoconvert():
+    """Ordering matters: before videoconvert it constrains the source pad,
+    which is the negotiation failure all over again."""
+    desc = build_pipeline_description(79, 11, "x264", Config())
+
+    assert desc.index("videoconvert") < desc.index("videorate")
