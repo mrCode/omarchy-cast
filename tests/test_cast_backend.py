@@ -1,7 +1,12 @@
 import pytest
 
 from omarchy_cast.backends.base import BackendError
-from omarchy_cast.backends.cast import CAST_APP_ID, CastBackend, host_tuple
+from omarchy_cast.backends.cast import (
+    CAST_APP_ID,
+    CaptureService,
+    CastBackend,
+    host_tuple,
+)
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import EXTEND, MIRROR, SessionState
@@ -252,3 +257,38 @@ async def test_refused_extend_does_not_strand_a_live_cast_in_the_daemon():
     assert [s["id"] for s in status["data"]["sessions"]] == [device.id]
     assert status["data"]["sessions"][0]["state"] == "streaming"
     assert (await daemon.handle({"cmd": "stop", "device_id": device.id}))["ok"] is True
+
+
+async def test_the_capture_service_refuses_to_start():
+    """The Cast capture path was observed streaming the built-in WEBCAM to a
+    television. pipewiresrc does not honour the portal fd here -- with
+    autoconnect on it selects the default video source (the camera), and with
+    autoconnect off it captures nothing at all. Until a form is found that
+    provably captures the granted node, this must not run."""
+    service = CaptureService(Config())
+
+    with pytest.raises(BackendError) as exc:
+        await service.start(make_device())
+
+    assert "camera" in str(exc.value).lower()
+
+
+async def test_no_portal_session_is_opened_while_disabled():
+    """It must refuse BEFORE touching the portal or any capture device."""
+    opened = []
+
+    async def spy():
+        opened.append(True)
+        raise AssertionError("portal must not be opened while Cast is disabled")
+
+    import omarchy_cast.backends.cast as cast_mod
+
+    original = cast_mod.open_screencast
+    cast_mod.open_screencast = spy
+    try:
+        with pytest.raises(BackendError):
+            await CaptureService(Config()).start(make_device())
+    finally:
+        cast_mod.open_screencast = original
+
+    assert opened == []

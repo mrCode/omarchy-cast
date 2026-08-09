@@ -43,7 +43,26 @@ class CaptureService:
         self._server: StreamServer | None = None
 
     async def start(self, device: Device) -> str:
-        try:
+        # DISABLED: this path has been observed capturing the built-in WEBCAM
+        # instead of the screen, and streaming it to a television.
+        #
+        # pipewiresrc does not honour the portal's fd here: with autoconnect on
+        # it connects to the ordinary PipeWire daemon and selects the default
+        # video source, which is the camera. Measured repeatedly against a live
+        # portal session, with a fresh fd, on both `path=` and `target-object=`:
+        # linked to node role='Camera', buffers flowing. Turning autoconnect off
+        # stops the leak but also stops all capture -- the source then connects
+        # to nothing and the pipeline blocks.
+        #
+        # Until a form is found that provably captures the granted node, this
+        # backend must not run. A cast that might broadcast the user's camera is
+        # not a feature that can ship behind a warning.
+        raise BackendError(
+            "Chromecast is disabled: the capture path could stream your camera "
+            "instead of your screen (see README). AirPlay is unaffected."
+        )
+
+        try:  # pragma: no cover - unreachable until the capture path is fixed
             encoder = select_encoder(self._config, probe_available())
         except NoEncoderAvailable as exc:
             raise BackendError(str(exc)) from exc

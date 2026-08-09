@@ -6,33 +6,39 @@ indicator.
 Built for Hyprland/Wayland. Screen capture goes through xdg-desktop-portal and
 PipeWire, encoded on the GPU.
 
-**Status: v0.1.** AirPlay works and is verified on real hardware. Chromecast
-support is written but **has never been tested against a real device** — see
-[Chromecast](#chromecast) before relying on it.
+**Status.** AirPlay works and is verified on real hardware, including extend
+mode. **Chromecast is disabled** — its capture path was found streaming the
+webcam instead of the screen; see [Chromecast](#chromecast--disabled).
 
 ## What works
 
 | Target | Status | Latency |
 |---|---|---|
 | **AirPlay** (Apple TV) | Verified on an `AppleTV11,1` at a sustained 31 fps | ~100–300 ms |
-| **Chromecast** | **Untested against hardware.** Unit-tested against fakes only | ~1–3 s by design |
+| **Chromecast** | **DISABLED** — capture could stream your camera; refuses to start | n/a |
 
-### Chromecast
+### Chromecast — DISABLED
 
-The code is here and it may work, but no Chromecast has ever been on a network
-where this was tested. Starting a Cast session prints a warning saying so. If
-you try it, please [open an issue](https://github.com/mrCode/omarchy-cast/issues)
-with the result — a confirmed failure is as useful as a success.
+**Chromecast support is disabled in the code and will refuse to start.**
 
-Even once it works, Cast goes through the Default Media Receiver, which buffers
-a media stream. **It will not be usable as a second display** — expect your
-cursor to lag a second or more behind. That is the protocol path, not a bug.
-For that reason [extend mode](#extend-mode) is AirPlay-only: `--mode extend`
-on a Chromecast is rejected with an error rather than quietly mirroring.
+The capture path was observed streaming the laptop's built-in **webcam** to a
+television while reporting that it was mirroring the screen. `pipewiresrc` does
+not honour the portal's file descriptor here: with `autoconnect` on it connects
+to the ordinary PipeWire daemon and selects the default video source, which is
+the camera. Measured repeatedly against a live portal session with a fresh fd,
+on both `path=` and `target-object=`, it linked to a node with
+`media.role=Camera` and streamed it. Turning `autoconnect` off stops the leak
+but also stops all capture.
 
-Real low-latency Cast mirroring needs the Chrome Mirroring receiver app, which
-requires AES-CTR-128 that GStreamer's SRTP elements do not implement. See
-`docs/superpowers/specs/` for the reasoning.
+Until a form is found that provably captures the node the portal granted, this
+must not run. A cast that might broadcast your camera is not something to ship
+behind a warning.
+
+The Cast protocol side does work: a Xiaomi TV Box played the stream at 8 Mbps
+with the clock advancing. The problem is purely which device gets captured.
+
+**AirPlay is unaffected** — capture there belongs to `doubletake`, which runs
+its own pipeline and never used this code path.
 
 ## Install
 
@@ -105,7 +111,7 @@ shows up in Hyprland like any other monitor — drag a window onto it and that
 window appears on the receiver. The output disappears again as soon as the
 cast stops.
 
-Extend is **AirPlay-only** — see [Chromecast](#chromecast) for why.
+Extend is **AirPlay-only** — see [Chromecast](#chromecast--disabled) for why.
 
 ```bash
 omarchy-cast start <id> --mode extend
@@ -145,8 +151,8 @@ Connect by address instead:
 omarchy-cast start --address 192.168.1.231
 ```
 
-Use `--protocol cast` for a Chromecast. The walker menu offers the same thing as
-its last entry.
+The walker menu offers the same thing as its last entry. (`--protocol cast`
+exists but Cast is disabled; see above.)
 
 ### Pairing
 
