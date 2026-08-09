@@ -45,10 +45,33 @@ def make_daemon(devices=None, **stub_kwargs):
 
 
 async def test_list_returns_devices():
-    daemon = make_daemon()
+    daemon = make_daemon(devices=[make_device(protocol="airplay")])
     resp = await daemon.handle({"cmd": "list"})
     assert resp["ok"] is True
-    assert resp["data"]["devices"][0]["id"] == "cast:1"
+    assert resp["data"]["devices"][0]["id"] == "airplay:1"
+
+
+async def test_cast_receivers_are_not_offered_while_cast_is_disabled():
+    """The backend refuses to start a Cast session because that path could
+    stream the webcam. Listing those receivers anyway means the user picks one,
+    waits, and gets an error the app already knew it would produce."""
+    daemon = make_daemon(devices=[
+        make_device(protocol="airplay"),
+        make_device(protocol="cast"),
+    ])
+
+    resp = await daemon.handle({"cmd": "list"})
+
+    assert [d["id"] for d in resp["data"]["devices"]] == ["airplay:1"]
+    assert resp["data"]["hidden_cast"] == 1
+
+
+async def test_nothing_is_reported_hidden_when_there_are_no_cast_receivers():
+    daemon = make_daemon(devices=[make_device(protocol="airplay")])
+
+    resp = await daemon.handle({"cmd": "list"})
+
+    assert "hidden_cast" not in resp["data"]
 
 
 async def test_start_creates_streaming_session():
@@ -263,8 +286,11 @@ class SlowDiscovery:
 
 
 def _cast_device():
+    """An AirPlay device despite the name: these tests are about the cold-start
+    wait, and cast receivers are filtered from `list` while Cast is disabled."""
     return Device(
-        id="cast:1", name="TV", address="192.168.1.5", port=8009, protocol="cast"
+        id="airplay:1", name="TV", address="192.168.1.5", port=7000,
+        protocol="airplay",
     )
 
 
@@ -279,7 +305,7 @@ async def test_list_waits_for_a_cold_discovery_to_find_something():
 
     resp = await daemon.handle({"cmd": "list"})
 
-    assert [d["id"] for d in resp["data"]["devices"]] == ["cast:1"]
+    assert [d["id"] for d in resp["data"]["devices"]] == ["airplay:1"]
 
 
 async def test_list_does_not_wait_once_something_is_known():

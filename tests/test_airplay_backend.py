@@ -74,7 +74,7 @@ class FakeProc:
         return self.returncode
 
 
-def make_backend(proc=None, ready_timeout=1.0, **cfg):
+def make_backend(proc=None, ready_timeout=1.0, route_check=None, **cfg):
     # Never touch the real display from tests. Switching is covered by
     # test_display.py and by the integration tests below, both with fakes.
     cfg.setdefault("airplay_auto_resolution", False)
@@ -91,6 +91,9 @@ def make_backend(proc=None, ready_timeout=1.0, **cfg):
         Config(**cfg),
         spawner=spawner,
         ready_timeout=ready_timeout,
+        # Same subnet unless a test says otherwise: the real check would read
+        # this machine's routing table and make the message environment-dependent.
+        route_check=route_check or (lambda addr: False),
     )
     return backend, states, spawned
 
@@ -460,3 +463,52 @@ async def test_display_untouched_when_disabled(monkeypatch):
     await backend.start(device)
     await backend.stop(device)
     assert calls == []
+
+
+# -- the stall message must not assert a cause it did not check --------------
+
+
+async def test_a_receiver_on_another_subnet_is_named_as_the_cause():
+    """This message used to blame the firewall outright. On a real network the
+    laptop was on 172.26.x, the Apple TV on 10.10.10.x, the firewall logged not
+    one drop, and the actual problem was routing. Telling the user to add a
+    firewall rule there sends them somewhere no rule can help."""
+    backend, _, _ = make_backend(
+        FakeProc([]), ready_timeout=0.05, route_check=lambda addr: True
+    )
+
+    with pytest.raises(BackendError) as exc:
+        await backend.start(make_device())
+
+    message = str(exc.value)
+    assert "different subnet" in message
+    assert "same network" in message
+    assert "ufw allow" not in message
+
+
+async def test_a_receiver_on_this_subnet_still_points_at_the_firewall():
+    backend, _, _ = make_backend(
+        FakeProc([]), ready_timeout=0.05, route_check=lambda addr: False,
+        airplay_port_range="60000-60010",
+    )
+
+    with pytest.raises(BackendError) as exc:
+        await backend.start(make_device())
+
+    message = str(exc.value)
+    assert "ufw allow" in message
+    assert "60000:60010" in message
+    assert "different subnet" not in message
+
+
+async def test_an_unknown_route_does_not_claim_a_subnet_problem():
+    """routed_via_gateway returns None when it cannot tell. A guess presented
+    as a fact is what made the old message harmful."""
+    backend, _, _ = make_backend(
+        FakeProc([]), ready_timeout=0.05, route_check=lambda addr: None
+    )
+
+    with pytest.raises(BackendError) as exc:
+        await backend.start(make_device())
+
+    assert "different subnet" not in str(exc.value)

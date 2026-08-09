@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 
 from omarchy_cast.backends.base import Backend, BackendError, BackendRefused, StateCallback
 from omarchy_cast.backends.creds import creds_path
-from omarchy_cast.core import display, virtual_display
+from omarchy_cast.core import display, net, virtual_display
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
 from omarchy_cast.core.session import EXTEND, MIRROR, SessionState
@@ -165,11 +165,15 @@ class AirPlayBackend(Backend):
         config: Config,
         spawner: Spawner | None = None,
         ready_timeout: float = READY_TIMEOUT,
+        route_check=None,
     ) -> None:
         super().__init__(on_state)
         self._config = config
         self._spawn = spawner or subprocess_spawner
         self._ready_timeout = ready_timeout
+        # Injectable: consulting the real routing table would make the failure
+        # message -- and its tests -- depend on whatever network is present.
+        self._route_check = route_check or net.routed_via_gateway
         # Extend is limited to one session at a time (see start()); mirror can
         # run several concurrently. What each session set up in the
         # environment lives on the _Session itself, not here -- a
@@ -370,15 +374,44 @@ class AirPlayBackend(Backend):
             self._emit(device, SessionState.AWAITING_PIN)
             return
 
-        message = (
-            f"{device.name} never started mirroring within "
-            f"{self._ready_timeout:.0f}s. The receiver connects back to this "
-            f"machine on {self._config.airplay_port_range}; a default-DROP "
-            f"firewall silently drops that and SETUP stalls. Allow inbound TCP "
-            f"and UDP on that range from {device.address}."
-        )
+        message = self._ready_timeout_message(device)
         await self._fail(session, message)
         raise BackendError(message)
+
+    def _ready_timeout_message(self, device: Device) -> str:
+        """Explain a stalled SETUP without asserting a cause we did not check.
+
+        This used to blame the firewall outright. That reads as authoritative
+        and was wrong on a real network: the laptop was on 172.26.x, the Apple
+        TV on 10.10.10.x, the firewall logged not one drop, and the actual
+        problem was that the receiver's return connection never crossed the
+        subnet boundary. Both causes look identical from here -- SETUP simply
+        stalls -- so name whichever one the routing table supports.
+        """
+        head = (
+            f"{device.name} never started mirroring within "
+            f"{self._ready_timeout:.0f}s. AirPlay needs the receiver to connect "
+            f"BACK to this machine on {self._config.airplay_port_range}, and "
+            f"something is stopping that."
+        )
+
+        if self._route_check(device.address) is True:
+            return (
+                f"{head} This receiver is on a different subnet -- reaching it "
+                f"goes through a gateway -- so its return connection probably "
+                f"cannot get back here at all. Join the same network as the "
+                f"receiver; no firewall rule on this machine will fix a routing "
+                f"problem."
+            )
+
+        return (
+            f"{head} With a default-DROP firewall those packets are discarded "
+            f"silently. Allow inbound TCP and UDP on that range:\n"
+            f"    sudo ufw allow proto tcp from {device.address} "
+            f"to any port {self._config.airplay_port_range.replace('-', ':')}\n"
+            f"Check for drops with: "
+            f"sudo journalctl -k | grep 'UFW BLOCK' | grep {device.address}"
+        )
 
     async def submit_pin(self, device: Device, pin: str) -> None:
         session = self._sessions.get(device.id)

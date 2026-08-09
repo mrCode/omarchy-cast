@@ -34,6 +34,16 @@ def host_tuple(device: Device) -> tuple:
     )
 
 
+# Single source of truth: the backend refuses to start, and `list` uses this
+# to stop offering receivers that can only fail. Flip this one flag when the
+# capture path is fixed.
+CAST_DISABLED = True
+CAST_DISABLED_REASON = (
+    "Chromecast is disabled: the capture path could stream your camera "
+    "instead of your screen (see README). AirPlay is unaffected."
+)
+
+
 class CaptureService:
     """Owns the portal session, the GStreamer pipeline, and the HTTP server."""
 
@@ -57,10 +67,7 @@ class CaptureService:
         # Until a form is found that provably captures the granted node, this
         # backend must not run. A cast that might broadcast the user's camera is
         # not a feature that can ship behind a warning.
-        raise BackendError(
-            "Chromecast is disabled: the capture path could stream your camera "
-            "instead of your screen (see README). AirPlay is unaffected."
-        )
+        raise BackendError(CAST_DISABLED_REASON)
 
         try:  # pragma: no cover - unreachable until the capture path is fixed
             encoder = select_encoder(self._config, probe_available())

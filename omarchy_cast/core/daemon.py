@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 
 from omarchy_cast.backends.base import Backend, BackendError, BackendRefused
+from omarchy_cast.backends.cast import CAST_DISABLED
 from omarchy_cast.core import manual
 from omarchy_cast.core.device import PROTOCOLS, Device
 from omarchy_cast.core.notify import notify
@@ -169,7 +170,20 @@ class Daemon:
         while not self.discovery.devices() and time.monotonic() < deadline:
             await asyncio.sleep(DISCOVERY_POLL)
 
-        return ok({"devices": [_device_dict(d) for d in self.discovery.devices()]})
+        found = self.discovery.devices()
+        if CAST_DISABLED:
+            # Offering a receiver whose only possible outcome is an error is
+            # worse than not listing it: the user picks it, waits, and gets a
+            # failure for something the app already knows it will refuse.
+            hidden = sum(1 for d in found if d.protocol == "cast")
+            found = [d for d in found if d.protocol != "cast"]
+        else:
+            hidden = 0
+
+        data = {"devices": [_device_dict(d) for d in found]}
+        if hidden:
+            data["hidden_cast"] = hidden
+        return ok(data)
 
     async def _cmd_status(self, request: dict) -> dict:
         # IDLE is filtered out for the same reason _cmd_stop and _cmd_pin

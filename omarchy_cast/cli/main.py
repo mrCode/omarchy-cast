@@ -196,7 +196,14 @@ always connect by address:
     omarchy-cast start --address 192.168.1.231"""
 
 
-def _print_devices(devices: list[dict]) -> None:
+def _print_devices(devices: list[dict], hidden_cast: int = 0) -> None:
+    # A silently shorter list is indistinguishable from a discovery failure, so
+    # say when receivers were withheld rather than just not showing them.
+    if hidden_cast:
+        print(
+            f"({hidden_cast} Chromecast receiver(s) hidden: Cast is disabled "
+            f"because its capture path could stream your camera -- see README)"
+        )
     if not devices:
         print(NOTHING_FOUND)
         return
@@ -273,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     if data.get("warning"):
         print(data["warning"], file=sys.stderr)
     if args.command == "list":
-        _print_devices(data.get("devices", []))
+        _print_devices(data.get("devices", []), data.get("hidden_cast", 0))
     elif args.command == "status":
         _print_sessions(data.get("sessions", []))
     elif args.command == "stop":
