@@ -34,6 +34,15 @@ DEFAULT_PORTS = {"airplay": 7000, "cast": 8009}
 # How long `list` will wait for a just-started mDNS browser to hear its first
 # reply. Receivers on a healthy network answer well inside this; the ceiling is
 # what a user waits at the keybind before the menu opens, so it stays short.
+# The daemon exiting throws away the mDNS cache, and a cold browser is close
+# to useless: measured on a real network, a fresh zeroconf browser took 15.7s
+# for its FIRST result and found one receiver in 90 seconds, while avahi --
+# running since boot with a warm cache -- listed six instantly. At the old 30s
+# idle timeout almost every command started cold, which is why `list` came back
+# empty and `start` said "device not found" for receivers plainly present.
+# Staying resident costs a few MB and keeps discovery useful.
+IDLE_TIMEOUT = 900.0
+
 DISCOVERY_GRACE = 3.0
 DISCOVERY_POLL = 0.1
 
@@ -73,7 +82,7 @@ class Daemon:
         self,
         discovery,
         backends: dict[str, Backend],
-        idle_timeout: float = 30.0,
+        idle_timeout: float = IDLE_TIMEOUT,
         notifier: Callable[[str], None] | None = None,
     ) -> None:
         self.discovery = discovery
@@ -478,10 +487,12 @@ def main() -> None:
     from omarchy_cast.backends.airplay import AirPlayBackend
     from omarchy_cast.backends.cast import CastBackend
     from omarchy_cast.core.config import load_config
+    from omarchy_cast.core.avahi import AvahiDiscovery
+    from omarchy_cast.core.avahi import available as avahi_available
     from omarchy_cast.core.discovery import Discovery
 
     parser = argparse.ArgumentParser(prog="omarchy-castd")
-    parser.add_argument("--idle-timeout", type=float, default=30.0)
+    parser.add_argument("--idle-timeout", type=float, default=IDLE_TIMEOUT)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -521,7 +532,18 @@ def main() -> None:
         log.info("removed %d virtual output(s) left over from a previous session", strays)
 
     config = load_config()
-    daemon = Daemon(Discovery(), {}, idle_timeout=args.idle_timeout)
+    # Prefer avahi: it has been running since boot with a warm cache, while a
+    # browser we start ourselves is cold and, measured on a real network, took
+    # 15.7s for its first result. Fall back to our own stack where avahi is
+    # absent, which keeps this working on systems that do not run it.
+    if avahi_available():
+        discovery = AvahiDiscovery()
+        log.info("discovery: avahi")
+    else:
+        discovery = Discovery()
+        log.info("discovery: built-in zeroconf (avahi not available)")
+
+    daemon = Daemon(discovery, {}, idle_timeout=args.idle_timeout)
     daemon.backends["airplay"] = AirPlayBackend(daemon.on_state, config)
     daemon.backends["cast"] = CastBackend(daemon.on_state, config)
 
