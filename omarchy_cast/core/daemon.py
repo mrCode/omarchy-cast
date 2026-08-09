@@ -37,6 +37,12 @@ DEFAULT_PORTS = {"airplay": 7000, "cast": 8009}
 DISCOVERY_GRACE = 3.0
 DISCOVERY_POLL = 0.1
 
+# `start` names a specific receiver, so the user has already committed and
+# waiting beats failing. `list` is interactive and stays snappy. Measured on a
+# real network: an Apple TV took ~8s to answer a freshly started browser, so a
+# 3s ceiling reported "device not found" for a receiver plainly present.
+START_DISCOVERY_GRACE = 12.0
+
 # The Cast backend has never been exercised against real hardware -- it is
 # covered only by unit tests against fakes. Say so at the point of use rather
 # than only in the README, so nobody debugs it thinking it is known-good.
@@ -166,9 +172,11 @@ class Daemon:
         been found yet, so a genuinely empty network still answers promptly
         once the grace period is behind it, and a warm daemon never waits.
         """
-        deadline = self._discovery_started_at + DISCOVERY_GRACE
-        while not self.discovery.devices() and time.monotonic() < deadline:
-            await asyncio.sleep(DISCOVERY_POLL)
+        # Wait on mDNS specifically, not on "anything known". A remembered
+        # device makes devices() non-empty from the first instant, which
+        # skipped this wait entirely for the users most likely to need it --
+        # the ones who had to add a receiver by address in the first place.
+        await self._await_discovery()
 
         found = self.discovery.devices()
         if CAST_DISABLED:
@@ -184,6 +192,24 @@ class Daemon:
         if hidden:
             data["hidden_cast"] = hidden
         return ok(data)
+
+    async def _await_discovery(self, grace: float = DISCOVERY_GRACE) -> None:
+        """Give a just-started mDNS browser its chance to answer.
+
+        Shared by `list` and `start`. It lived only in `list` at first, so the
+        keybind worked (menu lists, then starts against a warm daemon) while
+        `omarchy-cast start <id>` against a cold one failed with "device not
+        found" for a receiver that was plainly there.
+        """
+        deadline = self._discovery_started_at + grace
+        while not self._discovery_has_answered() and time.monotonic() < deadline:
+            await asyncio.sleep(DISCOVERY_POLL)
+
+    def _discovery_has_answered(self) -> bool:
+        has_discovered = getattr(self.discovery, "has_discovered", None)
+        if has_discovered is None:
+            return bool(self.discovery.devices())
+        return has_discovered()
 
     async def _cmd_status(self, request: dict) -> dict:
         # IDLE is filtered out for the same reason _cmd_stop and _cmd_pin
@@ -263,6 +289,14 @@ class Daemon:
             return err(f"unknown mode: {mode}; expected one of {MODES}")
 
         device = self._find_device(device_id)
+        if device is None:
+            # A cold daemon has not heard from mDNS yet. Without this, starting
+            # by id against a freshly spawned daemon reported "device not
+            # found" for a receiver that `list` would show a second later.
+            deadline = self._discovery_started_at + START_DISCOVERY_GRACE
+            while device is None and time.monotonic() < deadline:
+                await asyncio.sleep(DISCOVERY_POLL)
+                device = self._find_device(device_id)
         if device is None:
             return err(f"device not found: {device_id}")
 

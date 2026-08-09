@@ -55,7 +55,8 @@ PROGRESS_MARKERS = ("mirror session ready", "FairPlay setup complete")
 # Our encoder vocabulary -> doubletake's -hwaccel vocabulary.
 HWACCEL_MAP = {"auto": "auto", "vaapi": "vaapi", "nvenc": "nvenc", "x264": "none"}
 
-READY_TIMEOUT = 30.0
+# Default only; the real value comes from Config.airplay_ready_timeout.
+READY_TIMEOUT = 60.0
 MAX_BUFFER = 16384
 
 Spawner = Callable[[list[str], dict], Awaitable["ProcessLike"]]
@@ -164,13 +165,17 @@ class AirPlayBackend(Backend):
         on_state: StateCallback,
         config: Config,
         spawner: Spawner | None = None,
-        ready_timeout: float = READY_TIMEOUT,
+        ready_timeout: float | None = None,
         route_check=None,
     ) -> None:
         super().__init__(on_state)
         self._config = config
         self._spawn = spawner or subprocess_spawner
-        self._ready_timeout = ready_timeout
+        self._ready_timeout = (
+            ready_timeout
+            if ready_timeout is not None
+            else getattr(config, "airplay_ready_timeout", READY_TIMEOUT)
+        )
         # Injectable: consulting the real routing table would make the failure
         # message -- and its tests -- depend on whatever network is present.
         self._route_check = route_check or net.routed_via_gateway
@@ -374,11 +379,11 @@ class AirPlayBackend(Backend):
             self._emit(device, SessionState.AWAITING_PIN)
             return
 
-        message = self._ready_timeout_message(device)
+        message = self._ready_timeout_message(device, session)
         await self._fail(session, message)
         raise BackendError(message)
 
-    def _ready_timeout_message(self, device: Device) -> str:
+    def _ready_timeout_message(self, device: Device, session: "_Session") -> str:
         """Explain a stalled SETUP without asserting a cause we did not check.
 
         This used to blame the firewall outright. That reads as authoritative
@@ -388,6 +393,20 @@ class AirPlayBackend(Backend):
         subnet boundary. Both causes look identical from here -- SETUP simply
         stalls -- so name whichever one the routing table supports.
         """
+        # doubletake usually says exactly what went wrong; we were discarding
+        # it and guessing. Its portal failure is the common one for extend,
+        # whose credentials deliberately carry no restore token so the user can
+        # pick the omarchy-cast output -- if nobody answers that dialog, this
+        # is what it looks like, and no firewall rule is involved.
+        tail = session.tail(400)
+        if "portal" in tail.lower():
+            return (
+                f"{device.name}: screen capture never started because the "
+                f"screen-share prompt was not answered. Extend asks which "
+                f"output to share the first time -- pick 'omarchy-cast' in the "
+                f"dialog. doubletake said: {tail[-200:]}"
+            )
+
         head = (
             f"{device.name} never started mirroring within "
             f"{self._ready_timeout:.0f}s. AirPlay needs the receiver to connect "

@@ -31,6 +31,13 @@ class Config:
     # scaler, so a higher-resolution display makes the receiver drop the
     # connection. Switch the display while casting and put it back after.
     airplay_auto_resolution: bool = True
+    # Seconds to wait for doubletake to report "screen capture started".
+    # 30 was too tight: measured on an AppleTV11,1, capture began 23s after
+    # "mirror session ready", and extend adds a portal round-trip on top, so
+    # extend timed out repeatedly on a machine where mirror just squeaked
+    # through. Raising this costs nothing when a cast succeeds -- the wait ends
+    # at the marker, not at the ceiling.
+    airplay_ready_timeout: float = 60.0
     # Fixed, not ephemeral: the receiver connects INTO this port to fetch the
     # stream, so a random port in the ephemeral range cannot be allowed
     # through a firewall ahead of time. Set to 0 only if you have no
@@ -70,6 +77,8 @@ def load_config(path: Path | None = None) -> Config:
         cfg.airplay_hide_vapostproc = bool(airplay["hide_vapostproc"])
     if "auto_resolution" in airplay:
         cfg.airplay_auto_resolution = bool(airplay["auto_resolution"])
+    if "ready_timeout" in airplay:
+        cfg.airplay_ready_timeout = float(airplay["ready_timeout"])
 
     cast = data.get("cast", {})
     if "http_port" in cast:

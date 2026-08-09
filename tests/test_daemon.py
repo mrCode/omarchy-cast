@@ -81,11 +81,28 @@ async def test_start_creates_streaming_session():
     assert daemon.sessions["cast:1"].state is SessionState.STREAMING
 
 
-async def test_start_unknown_device_errors():
+async def test_start_unknown_device_errors(monkeypatch):
+    """A cold daemon waits for the named receiver to appear, so an id that will
+    never appear costs that whole grace. Pinned short here; the real ceiling is
+    measured from daemon start, so a warm daemon still fails immediately."""
+    monkeypatch.setattr(daemon_mod, "START_DISCOVERY_GRACE", 0.2)
     daemon = make_daemon()
-    resp = await daemon.handle({"cmd": "start", "device_id": "cast:999"})
+    resp = await daemon.handle({"cmd": "start", "device_id": "cast:nope"})
     assert resp["ok"] is False
-    assert "not found" in resp["error"]
+    assert "device not found" in resp["error"]
+
+
+async def test_a_warm_daemon_fails_an_unknown_device_immediately():
+    """The grace is measured from discovery start, not from the request, so it
+    must not punish every later mistyped id."""
+    daemon = make_daemon()
+    daemon._discovery_started_at = time.monotonic() - daemon_mod.START_DISCOVERY_GRACE - 1
+
+    started = time.monotonic()
+    resp = await daemon.handle({"cmd": "start", "device_id": "cast:nope"})
+
+    assert resp["ok"] is False
+    assert time.monotonic() - started < 0.5
 
 
 async def test_backend_failure_surfaces_message():
@@ -447,3 +464,96 @@ async def test_a_failure_to_remember_does_not_fail_the_add(tmp_path, monkeypatch
     )
 
     assert resp["ok"] is True
+
+
+async def test_a_remembered_device_does_not_skip_the_cold_start_wait():
+    """The wait used to trigger on "nothing known yet". A remembered receiver
+    makes that false from the first instant, so the users who had to add a
+    device by address -- precisely the ones with unreliable discovery -- got no
+    wait at all, and every cold list showed only their remembered entries."""
+
+    class DiscoveryWithRemembered:
+        """One remembered device from the start; mDNS answers on the 3rd poll."""
+
+        def __init__(self):
+            self.calls = 0
+            self.remembered = Device(
+                id="airplay:10.0.0.9", name="Remembered", address="10.0.0.9",
+                port=7000, protocol="airplay",
+            )
+            self.found = Device(
+                id="airplay:AA", name="Discovered", address="10.0.0.5",
+                port=7000, protocol="airplay",
+            )
+
+        def has_discovered(self):
+            self.calls += 1
+            return self.calls > 3
+
+        def devices(self):
+            out = [self.remembered]
+            if self.calls > 3:
+                out.append(self.found)
+            return out
+
+        def add(self, device):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    discovery = DiscoveryWithRemembered()
+    daemon = Daemon(discovery, {}, notifier=lambda m: None)
+    daemon._discovery_started_at = time.monotonic()
+
+    resp = await daemon.handle({"cmd": "list"})
+
+    ids = {d["id"] for d in resp["data"]["devices"]}
+    assert "airplay:AA" in ids, "mDNS result missing: the wait was skipped again"
+    assert "airplay:10.0.0.9" in ids
+
+
+async def test_start_waits_for_discovery_on_a_cold_daemon():
+    """`list` had the wait; `start` did not. So the keybind worked (it lists
+    first, warming the daemon) while `omarchy-cast start <id>` against a cold
+    daemon failed with "device not found" for a receiver plainly on the
+    network."""
+    device = Device(id="airplay:AA", name="TV", address="10.0.0.5", port=7000,
+                    protocol="airplay")
+
+    class LateDiscovery:
+        """mDNS answers only after a few polls, whichever way it is asked."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def has_discovered(self):
+            self.calls += 1
+            return self.calls > 3
+
+        def devices(self):
+            self.calls += 1
+            return [device] if self.calls > 3 else []
+
+        def add(self, d):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    daemon = Daemon(LateDiscovery(), {}, notifier=lambda m: None)
+    daemon.backends["airplay"] = StubBackend(daemon.on_state)
+    daemon.backends["airplay"].protocol = "airplay"
+    daemon._discovery_started_at = time.monotonic()
+
+    resp = await daemon.handle({"cmd": "start", "device_id": "airplay:AA"})
+    # The wait must be bounded, not merely eventual.
+    assert time.monotonic() - daemon._discovery_started_at < 5
+
+    assert resp["ok"] is True, resp.get("error")

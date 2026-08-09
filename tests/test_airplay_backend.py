@@ -18,7 +18,7 @@ from omarchy_cast.backends.airplay import (
 from omarchy_cast.backends.base import BackendError
 from omarchy_cast.core.config import Config
 from omarchy_cast.core.device import Device
-from omarchy_cast.core.session import SessionState
+from omarchy_cast.core.session import EXTEND, SessionState
 
 READY = READY_MARKERS[0].encode()
 
@@ -512,3 +512,25 @@ async def test_an_unknown_route_does_not_claim_a_subnet_problem():
         await backend.start(make_device())
 
     assert "different subnet" not in str(exc.value)
+
+
+async def test_a_portal_failure_is_reported_as_itself_not_as_a_firewall():
+    """doubletake says exactly what happened; we were discarding it and
+    guessing. Extend strips its restore token so the user can pick the
+    omarchy-cast output -- if nobody answers that dialog this is the result,
+    and pointing at the firewall sent the user somewhere no rule can help."""
+    proc = FakeProc([
+        b"mirror session ready (data port: 49217)\n",
+        b"screen capture failed: screencast portal: session response: "
+        b"timeout waiting for portal response\n",
+    ])
+    backend, _, _ = make_backend(proc, ready_timeout=0.2)
+
+    with pytest.raises(BackendError) as exc:
+        await backend.start(make_device(), EXTEND)
+
+    message = str(exc.value)
+    assert "screen-share prompt" in message
+    assert "omarchy-cast" in message
+    assert "ufw" not in message
+    assert "firewall" not in message.lower()

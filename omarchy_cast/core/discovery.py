@@ -133,6 +133,16 @@ class Discovery:
             ]
             return sorted(visible, key=lambda d: (d.protocol, d.name))
 
+    def has_discovered(self) -> bool:
+        """Has mDNS actually found anything yet?
+
+        Distinct from `devices()` being non-empty, which a remembered device
+        satisfies the instant the daemon starts -- and that made the cold-start
+        wait a no-op for exactly the users who have remembered devices.
+        """
+        with self._lock:
+            return any(i not in self._manual for i in self._devices)
+
     def add(self, device: Device) -> None:
         """Register a device found by means other than mDNS (e.g. a raw address)."""
         with self._lock:

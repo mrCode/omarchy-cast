@@ -81,3 +81,17 @@ def test_cast_http_port_is_fixed_not_ephemeral(tmp_path):
     port = load_config(tmp_path / "missing.toml").cast_http_port
     assert port != 0
     assert not (32768 <= port <= 60999)
+
+
+def test_ready_timeout_defaults_high_enough_for_a_real_receiver():
+    """Measured on an AppleTV11,1: capture began 23s after 'mirror session
+    ready', and extend adds a portal round-trip. At 30s extend timed out
+    repeatedly while mirror just squeaked through."""
+    assert Config().airplay_ready_timeout >= 60
+
+
+def test_ready_timeout_is_configurable(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[airplay]\nready_timeout = 90\n")
+
+    assert load_config(path).airplay_ready_timeout == 90
