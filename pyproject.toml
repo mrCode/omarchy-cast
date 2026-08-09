@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "omarchy-cast"
-version = "0.2.5"
+version = "0.2.6"
 description = "Desktop mirroring for Omarchy to AirPlay and Google Cast receivers"
 requires-python = ">=3.11"
 license = { text = "MIT" }
