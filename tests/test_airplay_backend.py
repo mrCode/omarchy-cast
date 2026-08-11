@@ -482,8 +482,11 @@ async def test_a_receiver_on_another_subnet_is_named_as_the_cause():
 
     message = str(exc.value)
     assert "different subnet" in message
-    assert "same network" in message
-    assert "ufw allow" not in message
+    # Cross-subnet is not fatal: a cast to an Apple TV two subnets away streamed
+    # fine once the firewall allowed that source. The message must not tell the
+    # user to abandon a setup that works, and must still give the rule.
+    assert "ufw allow" in message
+    assert "cannot get back here at all" not in message
 
 
 async def test_a_receiver_on_this_subnet_still_points_at_the_firewall():

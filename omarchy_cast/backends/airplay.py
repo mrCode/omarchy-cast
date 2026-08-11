@@ -415,12 +415,24 @@ class AirPlayBackend(Backend):
         )
 
         if self._route_check(device.address) is True:
+            # Cross-subnet is NOT fatal. This message used to say the return
+            # connection "cannot get back here at all" and to join the
+            # receiver's network -- then a cast to an Apple TV two subnets away
+            # streamed perfectly, because the router forwards both directions
+            # and the firewall allowed that source. Telling users to abandon a
+            # working setup is worse than saying nothing, so this now names the
+            # extra requirement instead of declaring defeat.
             return (
-                f"{head} This receiver is on a different subnet -- reaching it "
-                f"goes through a gateway -- so its return connection probably "
-                f"cannot get back here at all. Join the same network as the "
-                f"receiver; no firewall rule on this machine will fix a routing "
-                f"problem."
+                f"{head} This receiver is on a different subnet, reached through "
+                f"a gateway. That can work -- but only if your network routes "
+                f"the receiver's connection back to you, and your firewall "
+                f"allows it from that address:\n"
+                f"    sudo ufw allow proto tcp from {device.address} "
+                f"to any port {self._config.airplay_port_range.replace('-', ':')}\n"
+                f"    sudo ufw allow proto udp from {device.address} "
+                f"to any port {self._config.airplay_port_range.replace('-', ':')}\n"
+                f"If your network isolates clients between subnets, joining the "
+                f"receiver's network is the fallback."
             )
 
         return (

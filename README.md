@@ -204,6 +204,12 @@ over HTTP, so the stream port must be reachable:
 sudo ufw allow proto tcp from 192.168.1.0/24 to any port 8010
 ```
 
+**A receiver on a different subnet can still work.** An Apple TV reached
+through a gateway mirrored fine in testing -- what matters is that your network
+routes the receiver's connection back to you and the rule above covers its
+address, not that you share a subnet. Only if the network isolates clients
+between subnets do you need to join the receiver's network.
+
 Replace `192.168.1.0/24` with your own subnet. Scope these to the receiver's IP
 instead if you prefer a tighter rule — but remember DHCP can move it.
 
