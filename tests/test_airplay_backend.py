@@ -517,11 +517,21 @@ async def test_an_unknown_route_does_not_claim_a_subnet_problem():
     assert "different subnet" not in str(exc.value)
 
 
-async def test_a_portal_failure_is_reported_as_itself_not_as_a_firewall():
+async def test_a_portal_failure_is_reported_as_itself_not_as_a_firewall(monkeypatch):
     """doubletake says exactly what happened; we were discarding it and
     guessing. Extend strips its restore token so the user can pick the
     omarchy-cast output -- if nobody answers that dialog this is the result,
     and pointing at the firewall sent the user somewhere no rule can help."""
+    # Stub the virtual display: without this the test shells out to hyprctl and
+    # creates a real output on the developer's machine. It passed for a while
+    # only because the environment happened to cooperate.
+    import omarchy_cast.backends.airplay as airplay_mod
+
+    monkeypatch.setattr(airplay_mod.virtual_display, "cleanup_strays", lambda *a, **k: 0)
+    monkeypatch.setattr(airplay_mod.virtual_display, "create", lambda *a, **k: "omarchy-cast")
+    monkeypatch.setattr(airplay_mod.virtual_display, "remove", lambda *a, **k: True)
+    monkeypatch.setattr(airplay_mod, "creds_path", lambda mode: None)
+
     proc = FakeProc([
         b"mirror session ready (data port: 49217)\n",
         b"screen capture failed: screencast portal: session response: "
