@@ -121,10 +121,9 @@ The walker menu asks "Mirror or extend?" as a second prompt once you pick a
 receiver, and the TUI binds `e` to it directly (`Enter` still starts a normal
 mirror).
 
-Unlike mirror, extend does **not** change your display resolution. Mirror has
-to switch the panel to 1920x1080 because doubletake negotiates the stream at
-1080p and its capture path has no scaler (see [Known limitations](#known-limitations)
-below); a virtual output is already 1080p, so extend has nothing to switch.
+Neither mode changes your display any more. Both capture a virtual 1920x1080
+output -- extend gives the receiver its own desktop, mirror shows a copy of
+your screen -- so the panel keeps its own resolution and refresh rate.
 
 **The first-run portal prompt matters: choose the `omarchy-cast` output.**
 Picking the laptop panel instead silently produces a mirror, not an extend,
@@ -279,17 +278,25 @@ This is **not** a tvOS authentication problem. Pairing with an onscreen code,
 credential persistence and `pair-verify` all work; an Apple TV with only an
 onscreen code and no AirPlay password mirrors fine.
 
-**AirPlay switches your display to 1920x1080 while casting.** doubletake
-negotiates the stream at 1080p and its capture path has no scaler, so a
-higher-resolution display makes the receiver drop the connection. omarchy-cast
-therefore switches the focused monitor when a cast starts and restores it when
-the cast stops, fails, or the daemon exits — including after a crash, since the
-previous mode is written to disk before switching.
+**Mirror no longer switches your display.** doubletake negotiates the stream at
+1080p and its capture path has no scaler, so a 1920x1080 source is required.
+omarchy-cast used to get that by switching the panel itself — which was
+expensive on machines with no native 1080p mode: a 2560x1600 240Hz laptop panel
+became 1920x1080 **at 60Hz**, and typing felt sluggish for the whole cast. The
+cast was fine; the screen it was typed on was four times slower.
 
-Disable with `auto_resolution = false` under `[airplay]` if you would rather
-manage it yourself. Tracked upstream as
-[doubletake#28](https://github.com/omarroth/doubletake/issues/28); once that
-lands this can go away.
+Both modes now capture a virtual 1920x1080 output instead, so the panel is left
+alone. Mirror's output mirrors your screen; extend's is an independent desktop.
+
+The panel switch remains only as a fallback for when a virtual output cannot be
+created, since a slower panel beats refusing to cast. `auto_resolution = false`
+under `[airplay]` opts out of both.
+
+**Each mode asks which output to share, once.** They capture different virtual
+outputs, so each stores its own portal token: pick `omarchy-cast-mirror` for
+mirror and `omarchy-cast` for extend. Choosing your laptop panel instead
+silently captures the panel, and the stored token repeats that mistake. Delete
+the relevant file under `~/.local/state/omarchy-cast/` to get the prompt back.
 
 **Casting to both protocols at once costs two encodes.** AirPlay capture is
 owned by doubletake and cannot be shared, so a simultaneous AirPlay + Chromecast
