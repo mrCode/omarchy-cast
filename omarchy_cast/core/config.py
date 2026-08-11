@@ -38,6 +38,15 @@ class Config:
     # through. Raising this costs nothing when a cast succeeds -- the wait ends
     # at the marker, not at the ceiling.
     airplay_ready_timeout: float = 60.0
+    # doubletake's -target-latency-ms: how much end-to-end delay the sender
+    # targets, which the receiver buffers to. Its default is 100. Lower means
+    # a more responsive cursor and less typing lag, at the cost of tolerance
+    # for network jitter -- too low and the receiver stutters.
+    airplay_target_latency_ms: int = 100
+    # Audio is streamed by default. Turning it off removes audio/video sync
+    # from the pipeline, which is worth testing when mirroring a desktop for
+    # work rather than playing media.
+    airplay_audio: bool = True
     # Fixed, not ephemeral: the receiver connects INTO this port to fetch the
     # stream, so a random port in the ephemeral range cannot be allowed
     # through a firewall ahead of time. Set to 0 only if you have no
@@ -79,6 +88,10 @@ def load_config(path: Path | None = None) -> Config:
         cfg.airplay_auto_resolution = bool(airplay["auto_resolution"])
     if "ready_timeout" in airplay:
         cfg.airplay_ready_timeout = float(airplay["ready_timeout"])
+    if "target_latency_ms" in airplay:
+        cfg.airplay_target_latency_ms = int(airplay["target_latency_ms"])
+    if "audio" in airplay:
+        cfg.airplay_audio = bool(airplay["audio"])
 
     cast = data.get("cast", {})
     if "http_port" in cast:

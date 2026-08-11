@@ -31,16 +31,29 @@ def fakes(monkeypatch, tmp_path):
     events = []
     monkeypatch.setattr(airplay_mod.virtual_display, "cleanup_strays",
                         lambda *a, **k: events.append("cleanup") or 0)
-    monkeypatch.setattr(airplay_mod.virtual_display, "create",
-                        lambda *a, **k: events.append("create") or "omarchy-cast")
+    # Return whichever name was requested: mirror and extend use different
+    # outputs, and a stub that always says "omarchy-cast" would hide a mirror
+    # session tearing down extend's output.
+    def _create(*a, want=None, mirror_of=None, **k):
+        name = want or airplay_mod.virtual_display.VIRTUAL_NAME
+        events.append(f"create:{name}" + (f":mirror-of={mirror_of}" if mirror_of else ""))
+        return name
+
+    monkeypatch.setattr(airplay_mod.virtual_display, "create", _create)
+    monkeypatch.setattr(airplay_mod.virtual_display, "focused_monitor",
+                        lambda *a, **k: "eDP-2")
     monkeypatch.setattr(airplay_mod.virtual_display, "remove",
                         lambda name, *a, **k: events.append(f"remove:{name}") or True)
     monkeypatch.setattr(airplay_mod.display, "apply_stream_mode",
                         lambda *a, **k: events.append("switch-display"))
     monkeypatch.setattr(airplay_mod.display, "restore_mode",
                         lambda *a, **k: events.append("restore-display") or True)
-    monkeypatch.setattr(airplay_mod, "creds_path",
-                        lambda mode: (tmp_path / "extend.json") if mode == EXTEND else None)
+    def _creds(mode, virtual=False):
+        if mode == EXTEND:
+            return tmp_path / "extend.json"
+        return (tmp_path / "mirror.json") if virtual else None
+
+    monkeypatch.setattr(airplay_mod, "creds_path", _creds)
     return events
 
 
@@ -64,7 +77,7 @@ async def test_extend_creates_a_virtual_output(fakes):
     proc = FakeProc([READY + b"\n"])
     backend, states, _ = make_backend(proc)
     await backend.start(make_device(), EXTEND)
-    assert "create" in fakes
+    assert "create:omarchy-cast" in fakes
     assert states[-1][0] is SessionState.STREAMING
     await backend.shutdown()
 
@@ -78,12 +91,47 @@ async def test_extend_does_not_touch_the_display(fakes):
     await backend.shutdown()
 
 
-async def test_mirror_still_switches_the_display(fakes):
+async def test_mirror_uses_a_mirrored_output_and_leaves_the_panel_alone(fakes):
+    """Mirror used to force the PANEL to 1920x1080. On a laptop offering only
+    2560x1600 at 240Hz or 60Hz, Hyprland synthesised 1080p at 60Hz -- so the
+    user typed on a display four times slower and blamed the cast. A virtual
+    output mirroring the panel gives the same 1080p source for free."""
     proc = FakeProc([READY + b"\n"])
     backend, _, _ = make_backend(proc)
+
     await backend.start(make_device(), MIRROR)
+
+    assert "create:omarchy-cast-mirror:mirror-of=eDP-2" in fakes
+    assert "switch-display" not in fakes
+    await backend.shutdown()
+
+
+async def test_mirror_falls_back_to_switching_when_no_output_can_be_made(
+    fakes, monkeypatch
+):
+    """A slower panel beats refusing to cast at all."""
+    monkeypatch.setattr(
+        airplay_mod.virtual_display, "create", lambda *a, **k: None
+    )
+    proc = FakeProc([READY + b"\n"])
+    backend, _, _ = make_backend(proc)
+
+    await backend.start(make_device(), MIRROR)
+
     assert "switch-display" in fakes
-    assert "create" not in fakes
+    await backend.shutdown()
+
+
+async def test_mirror_and_extend_use_different_outputs(fakes):
+    """Sharing one name meant either session's cleanup destroyed the other's
+    live output -- the failure shape this project has already shipped once."""
+    backend = make_two_device_backend()
+    await backend.start(make_device(), MIRROR)
+    await backend.start(make_device_b(), EXTEND)
+
+    virtuals = sorted(s.virtual for s in backend._sessions.values())
+
+    assert virtuals == ["omarchy-cast", "omarchy-cast-mirror"]
     await backend.shutdown()
 
 
@@ -97,11 +145,18 @@ async def test_extend_passes_its_own_creds_file(fakes, tmp_path):
     await backend.shutdown()
 
 
-async def test_mirror_passes_no_creds_flag(fakes):
+async def test_mirror_passes_its_own_creds_when_it_captures_a_virtual_output(
+    fakes, tmp_path
+):
+    """Mirror now captures a virtual output, so doubletake's default token --
+    which points at the real panel -- would silently select the panel instead."""
     proc = FakeProc([READY + b"\n"])
     backend, _, spawned = make_backend(proc)
+
     await backend.start(make_device(), MIRROR)
-    assert "-creds" not in spawned["argv"]
+
+    assert "-creds" in spawned["argv"]
+    assert str(tmp_path / "mirror.json") in spawned["argv"]
     await backend.shutdown()
 
 
@@ -135,7 +190,7 @@ async def test_strays_are_cleaned_before_creating(fakes):
     proc = FakeProc([READY + b"\n"])
     backend, _, _ = make_backend(proc)
     await backend.start(make_device(), EXTEND)
-    assert fakes.index("cleanup") < fakes.index("create")
+    assert fakes.index("cleanup") < fakes.index("create:omarchy-cast")
     await backend.shutdown()
 
 
@@ -215,7 +270,9 @@ async def test_teardown_mirror_then_extend_restores_both(fakes):
     await backend.stop(mirror_device)
     await backend.stop(extend_device)
 
-    assert "restore-display" in fakes
+    # Mirror removes its mirrored output; extend removes its own. Neither
+    # touches the panel any more.
+    assert "remove:omarchy-cast-mirror" in fakes
     assert "remove:omarchy-cast" in fakes
 
 
@@ -229,7 +286,9 @@ async def test_teardown_extend_then_mirror_restores_both(fakes):
     await backend.stop(extend_device)
     await backend.stop(mirror_device)
 
-    assert "restore-display" in fakes
+    # Mirror removes its mirrored output; extend removes its own. Neither
+    # touches the panel any more.
+    assert "remove:omarchy-cast-mirror" in fakes
     assert "remove:omarchy-cast" in fakes
 
 
@@ -429,7 +488,7 @@ async def test_two_extends_racing_produce_exactly_one_session(fakes):
     assert "already extending" in str(failures[0])
     assert len(backend._sessions) == 1
     # One winner means one virtual output was ever created.
-    assert fakes.count("create") == 1
+    assert fakes.count("create:omarchy-cast") == 1
 
     await backend.shutdown()
 
@@ -441,8 +500,9 @@ async def test_mirror_start_while_extend_is_active_leaves_the_output_alone(fakes
     await backend.start(extend_device, EXTEND)
     await backend.start(mirror_device, MIRROR)
 
+    # Mirror makes its OWN output and must not disturb extend's.
     assert "remove:omarchy-cast" not in fakes
-    assert "switch-display" in fakes
+    assert "create:omarchy-cast-mirror:mirror-of=eDP-2" in fakes
 
     await backend.shutdown()
     assert "remove:omarchy-cast" in fakes

@@ -191,7 +191,8 @@ class AirPlayBackend(Backend):
 
     # -- process construction --------------------------------------------
 
-    def build_argv(self, device: Device, mode: str = MIRROR) -> list[str]:
+    def build_argv(self, device: Device, mode: str = MIRROR,
+                   virtual: bool = False) -> list[str]:
         argv = [
             BIN,
             "-target", device.address,
@@ -202,8 +203,16 @@ class AirPlayBackend(Backend):
         if self._config.airplay_bitrate:
             argv += ["-bitrate", str(self._config.airplay_bitrate)]
 
+        # Latency knobs. doubletake defaults to 100ms of targeted end-to-end
+        # delay and streams audio; both were previously left at their defaults
+        # with no way to change them, which is the first thing to reach for
+        # when the cursor or typing feels behind.
+        argv += ["-target-latency-ms", str(self._config.airplay_target_latency_ms)]
+        if not self._config.airplay_audio:
+            argv += ["-no-audio"]
+
         # Each mode keeps its own portal restore token, i.e. its own output.
-        path = creds_path(mode)
+        path = creds_path(mode, virtual=virtual)
         if path is not None:
             argv += ["-creds", str(path)]
         return argv
@@ -304,7 +313,7 @@ class AirPlayBackend(Backend):
         switched_display = False
 
         if mode == EXTEND:
-            virtual_display.cleanup_strays()
+            virtual_display.cleanup_strays(in_use=self._outputs_in_use())
             virtual_name = virtual_display.create()
             if virtual_name is None:
                 message = (
@@ -314,13 +323,37 @@ class AirPlayBackend(Backend):
                 self._emit(device, SessionState.FAILED, message)
                 raise BackendError(message)
         elif self._config.airplay_auto_resolution:
-            # Mirror only: the receiver rejects a stream whose SPS does not
-            # match the negotiated 1920x1080. A virtual output is already 1080p.
-            display.apply_stream_mode()
-            switched_display = True
+            # Mirror needs a 1920x1080 source, because doubletake negotiates the
+            # stream at 1080p and its capture path has no scaler. Forcing the
+            # PANEL to 1080p was the old way, and it was expensive: this laptop
+            # offers only 2560x1600 at 240Hz or 60Hz, so Hyprland synthesised
+            # 1080p at 60Hz and the user was typing on a display four times
+            # slower than usual. The cast was never the lag; the panel was.
+            #
+            # A virtual output that MIRRORS the panel gives the same 1080p
+            # source while the panel keeps its own mode.
+            source = virtual_display.focused_monitor()
+            if source is not None:
+                virtual_display.cleanup_strays(in_use=self._outputs_in_use())
+                virtual_name = virtual_display.create(
+                    mirror_of=source, want=virtual_display.MIRROR_NAME
+                )
+
+            if virtual_name is None:
+                # Fall back to the old behaviour rather than refuse to cast:
+                # a slower panel beats no mirror at all.
+                log.warning(
+                    "could not create a mirrored virtual output; "
+                    "falling back to switching the panel to 1080p"
+                )
+                display.apply_stream_mode()
+                switched_display = True
 
         try:
-            proc = await self._spawn(self.build_argv(device, mode), self.daemon_env())
+            proc = await self._spawn(
+                self.build_argv(device, mode, virtual=virtual_name is not None),
+                self.daemon_env(),
+            )
         except FileNotFoundError as exc:
             # No session was ever created to hang this cleanup off of, so it
             # has to happen here or a spawn failure strands a real monitor
@@ -509,9 +542,22 @@ class AirPlayBackend(Backend):
         await self._teardown(session.device.id)
         self._emit(session.device, SessionState.FAILED, message)
 
+    def _outputs_in_use(self) -> tuple[str, ...]:
+        """Virtual outputs owned by live sessions, which must never be swept."""
+        return tuple(s.virtual for s in self._sessions.values() if s.virtual)
+
     def _active_extend_session(self) -> _Session | None:
+        """Sessions in EXTEND mode only.
+
+        This used to mean "any session owning a virtual output", which was the
+        same thing until mirror started owning one too -- at which point an
+        active mirror made every extend refuse with "already extending".
+        Mirror and extend own different outputs and do not conflict.
+        """
         return next(
-            (s for s in self._sessions.values() if s.virtual is not None), None
+            (s for s in self._sessions.values()
+             if s.mode == EXTEND and s.virtual is not None),
+            None,
         )
 
     def _any_session_needs_display(self) -> bool:

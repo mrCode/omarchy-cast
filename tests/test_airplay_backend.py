@@ -416,9 +416,22 @@ def test_shim_is_regenerated_idempotently(tmp_path, monkeypatch):
 # -- display switching integration -------------------------------------
 
 
-async def test_start_switches_the_display_and_stop_restores_it(monkeypatch):
-    """The receiver rejects a stream whose SPS does not match 1920x1080."""
+async def test_mirror_falls_back_to_switching_the_panel(monkeypatch):
+    """The fallback path only. Mirror normally captures a virtual output that
+    mirrors the panel, leaving its mode alone -- forcing the panel to 1080p
+    dropped a 240Hz display to 60Hz. When no virtual output can be made, a
+    slower panel still beats refusing to cast.
+
+    virtual_display is stubbed because without it this test shells out to real
+    hyprctl and creates outputs on the developer's machine.
+    """
     from omarchy_cast.core import display as display_mod
+    import omarchy_cast.backends.airplay as airplay_mod
+
+    monkeypatch.setattr(airplay_mod.virtual_display, "focused_monitor", lambda *a, **k: "eDP-2")
+    monkeypatch.setattr(airplay_mod.virtual_display, "cleanup_strays", lambda *a, **k: 0)
+    monkeypatch.setattr(airplay_mod.virtual_display, "create", lambda *a, **k: None)
+    monkeypatch.setattr(airplay_mod.virtual_display, "remove", lambda *a, **k: True)
 
     calls = []
     monkeypatch.setattr(display_mod, "apply_stream_mode", lambda *a, **k: calls.append("apply"))
@@ -529,8 +542,9 @@ async def test_a_portal_failure_is_reported_as_itself_not_as_a_firewall(monkeypa
 
     monkeypatch.setattr(airplay_mod.virtual_display, "cleanup_strays", lambda *a, **k: 0)
     monkeypatch.setattr(airplay_mod.virtual_display, "create", lambda *a, **k: "omarchy-cast")
+    monkeypatch.setattr(airplay_mod.virtual_display, "focused_monitor", lambda *a, **k: "eDP-2")
     monkeypatch.setattr(airplay_mod.virtual_display, "remove", lambda *a, **k: True)
-    monkeypatch.setattr(airplay_mod, "creds_path", lambda mode: None)
+    monkeypatch.setattr(airplay_mod, "creds_path", lambda mode, virtual=False: None)
 
     proc = FakeProc([
         b"mirror session ready (data port: 49217)\n",
