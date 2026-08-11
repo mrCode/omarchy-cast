@@ -143,7 +143,7 @@ before.
 
 ### When discovery finds nothing
 
-mDNS is not reliable. Some access points do not forward multicast between
+mDNS is not always usable. Some access points do not forward multicast between
 clients, so a receiver can be fully reachable and still invisible to `list`.
 Connect by address instead:
 
@@ -176,10 +176,10 @@ packets are dropped by the kernel before anything sees them.
 sudo ufw allow proto udp from 192.168.1.0/24 to any port 5353
 ```
 
-`avahi-browse` can still find receivers when omarchy-cast cannot, which makes
-this look like an application bug. It is not: `avahi-daemon` reads the multicast
-stream, while omarchy-cast requests unicast replies, and those are exactly what
-a deny-incoming rule drops. Confirm with:
+Since v0.2.7 discovery goes through `avahi` rather than a second mDNS stack of
+our own, so omarchy-cast sees what `avahi-browse` sees. If `avahi-browse` finds
+a receiver and omarchy-cast does not, that is a bug worth reporting. Check for
+dropped replies with:
 
 ```bash
 sudo journalctl -k | grep 'UFW BLOCK' | grep 5353
