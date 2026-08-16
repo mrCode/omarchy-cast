@@ -7,6 +7,7 @@ import sys
 from omarchy_cast.core.notify import notify
 from omarchy_cast.core.session import EXTEND, MIRROR, MODES
 from omarchy_cast.cli.client import DaemonUnavailable, request
+from omarchy_cast.cli import picker
 from omarchy_cast.cli.menu import (
     MANUAL_ENTRY,
     MODE_ENTRIES,
@@ -81,18 +82,16 @@ def _run_waybar() -> int:
 
 
 def _walker(entries: list[str], prompt: str) -> str:
-    result = subprocess.run(
-        ["walker", "--dmenu", "-p", prompt],
-        input="\n".join(entries),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result.stdout
+    """Kept as the name the menu code calls; the backend is chosen at runtime.
+
+    Omarchy replaced walker with a Quickshell menu, so hardcoding `walker`
+    meant the cast keybind died with a traceback after a system update.
+    """
+    return picker.pick(prompt, entries)
 
 
 def _prompt_for_address() -> str:
-    return _walker([], "Receiver IP address").strip()
+    return picker.ask("Receiver IP address")
 
 
 def _prompt_mode() -> str | None:
@@ -100,6 +99,9 @@ def _prompt_mode() -> str | None:
 
 
 def _run_menu() -> int:
+    if picker.backend() is None:
+        return _fail(picker.missing_message())
+
     response = asyncio.run(request("list"))
     if not response.get("ok"):
         return _fail(response.get("error", "unknown error"))

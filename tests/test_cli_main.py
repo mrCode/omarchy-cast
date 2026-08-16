@@ -125,8 +125,13 @@ def test_daemon_unavailable_returns_two(fake_request, capsys, monkeypatch):
 
 @pytest.fixture
 def fake_menu(monkeypatch):
-    """Stubs the three things _run_menu shells out to: the daemon socket,
-    walker, and notify-send -- none of which exist in the test environment.
+    """Stubs everything _run_menu shells out to: the daemon socket, the
+    desktop menu, and notify-send -- none of which belong in a test.
+
+    The text prompt is stubbed separately from the picker because they are
+    separate programs (omarchy-menu-input vs omarchy-menu-select). Missing
+    that let one test open a real dialog on the developer's screen and hang
+    the suite.
     """
     responses = {}
     walker_answers = {}
@@ -141,8 +146,12 @@ def fake_menu(monkeypatch):
     def _notify(message, urgent=False):
         notifications.append(message)
 
+    def _ask(prompt):
+        return walker_answers.get(prompt, "")
+
     monkeypatch.setattr(cli_main, "request", _request)
     monkeypatch.setattr(cli_main, "_walker", _walker)
+    monkeypatch.setattr(cli_main.picker, "ask", _ask)
     monkeypatch.setattr(cli_main, "_notify", _notify)
     return responses, walker_answers, notifications
 

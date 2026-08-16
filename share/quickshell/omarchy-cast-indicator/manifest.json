@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy-cast.indicator",
+  "name": "Cast indicator",
+  "version": "1.0.0",
+  "author": "Basem Aljedai",
+  "description": "Shows whether omarchy-cast is casting; click to open the cast menu, right-click to stop",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Cast indicator",
+    "description": "Screen casting state for omarchy-cast",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

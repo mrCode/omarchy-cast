@@ -1,7 +1,7 @@
 # omarchy-cast
 
-Mirror your Omarchy desktop to an Apple TV, from a walker menu with a waybar
-indicator.
+Mirror your Omarchy desktop to an Apple TV — or extend onto it as a second
+monitor — from your desktop's menu, with a bar indicator.
 
 Built for Hyprland/Wayland. Screen capture goes through xdg-desktop-portal and
 PipeWire, encoded on the GPU.
@@ -56,11 +56,11 @@ deliberately does not use pip: Arch ships `python` without pip and marks the
 environment externally-managed (PEP 668), and every dependency is a system
 package already. Uninstall with `./uninstall.sh`.
 
-> **Not on the AUR.** Arch [blocked all AUR pushes in August 2026](https://www.phoronix.com/news/Arch-Linux-AUR-Adoptions-Halted)
-> after a wave of malicious packages — the third incident since June. The AUR
-> only ever hosted PKGBUILDs, never the code, so building from this clone gives
-> you the same package while letting you read exactly what you are running.
-> An AUR package may follow if and when uploads reopen.
+Or from the AUR:
+
+```bash
+yay -S omarchy-cast
+```
 
 AirPlay support additionally needs [doubletake](https://github.com/omarroth/doubletake)
 — specifically the **git** package:
@@ -87,8 +87,9 @@ omarchy-cast start airplay:AA:BB:CC:DD:EE:FF
 omarchy-cast stop
 ```
 
-`omarchy-cast menu` opens a walker picker of discovered receivers and starts the
-one you choose. `omarchy-cast status` shows what is running.
+`omarchy-cast menu` opens your desktop's picker — `omarchy-menu-select` on
+Omarchy, or `walker` — listing discovered receivers, and starts the one you
+choose. `omarchy-cast status` shows what is running.
 
 ### TUI
 
@@ -102,7 +103,7 @@ address, `r` refreshes, `q` quits. PIN prompts appear inline when a receiver
 asks for one.
 
 It is just another client of the same daemon, so the TUI, the CLI, the menu and
-the waybar indicator always agree.
+the bar indicator always agree.
 
 ### Extend mode
 
@@ -117,7 +118,7 @@ Extend is **AirPlay-only** — see [Chromecast](#chromecast--disabled) for why.
 omarchy-cast start <id> --mode extend
 ```
 
-The walker menu asks "Mirror or extend?" as a second prompt once you pick a
+The menu asks "Mirror or extend?" as a second prompt once you pick a
 receiver, and the TUI binds `e` to it directly (`Enter` still starts a normal
 mirror).
 
@@ -150,7 +151,7 @@ Connect by address instead:
 omarchy-cast start --address 192.168.1.231
 ```
 
-The walker menu offers the same thing as its last entry. (`--protocol cast`
+The menu offers the same thing as its last entry. (`--protocol cast`
 exists but Cast is disabled; see above.)
 
 ### Pairing
@@ -217,9 +218,20 @@ ephemeral one lands somewhere in 32768–60999 and cannot be allowed through a
 firewall in advance, which breaks casting in a way that looks like the receiver
 rejecting the stream.
 
-## Waybar
+## Status indicator
 
-Add `"custom/cast-indicator"` to `modules-right` in
+**Omarchy (Quickshell).** Recent Omarchy runs a Quickshell bar, so the widget
+is a shell plugin:
+
+```bash
+cp -r share/quickshell/omarchy-cast-indicator ~/.config/omarchy/plugins/omarchy-cast.indicator
+omarchy plugin enable omarchy-cast.indicator right
+```
+
+It polls `omarchy-cast waybar`, the same command the waybar module uses — that
+command never spawns the daemon, so polling it cannot start anything.
+
+**waybar.** Add `"custom/cast-indicator"` to `modules-right` in
 `~/.config/waybar/config.jsonc`, then merge in the block from
 [share/waybar/cast-indicator.jsonc](share/waybar/cast-indicator.jsonc) and
 append [share/waybar/cast-indicator.css](share/waybar/cast-indicator.css) to

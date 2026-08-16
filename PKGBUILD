@@ -1,6 +1,6 @@
 # Maintainer: Basem Aljedai <baljedai@gmail.com>
 pkgname=omarchy-cast
-pkgver=0.2.9
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Desktop mirroring for Omarchy/Hyprland to AirPlay receivers (experimental Google Cast support)"
 arch=('any')
@@ -55,4 +55,10 @@ package() {
     "$pkgdir/usr/share/$pkgname/waybar/cast-indicator.jsonc"
   install -Dm644 share/waybar/cast-indicator.css \
     "$pkgdir/usr/share/$pkgname/waybar/cast-indicator.css"
+
+  # Quickshell bar widget for current Omarchy, which no longer runs waybar.
+  install -Dm644 share/quickshell/omarchy-cast-indicator/manifest.json \
+    "$pkgdir/usr/share/$pkgname/quickshell/omarchy-cast-indicator/manifest.json"
+  install -Dm644 share/quickshell/omarchy-cast-indicator/Widget.qml \
+    "$pkgdir/usr/share/$pkgname/quickshell/omarchy-cast-indicator/Widget.qml"
 }

@@ -14,6 +14,27 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def no_real_menus(monkeypatch):
+    """Never let a test open the desktop's menu.
+
+    A test called the real `omarchy-menu-input`, which put a dialog on the
+    developer's screen and hung the suite until it was killed by hand. Tests
+    that exercise the menu must stub these explicitly; anything else fails
+    loudly instead of blocking.
+    """
+    from omarchy_cast.cli import picker
+
+    def forbidden(*a, **k):
+        raise AssertionError(
+            "a test tried to open the real desktop menu; stub picker.pick/ask"
+        )
+
+    monkeypatch.setattr(picker, "pick", forbidden)
+    monkeypatch.setattr(picker, "ask", forbidden)
+    monkeypatch.setattr(picker, "backend", lambda: "stub")
+
+
+@pytest.fixture(autouse=True)
 def isolate_user_state(tmp_path, monkeypatch):
     """Point every XDG lookup at a per-test temp directory.
 
