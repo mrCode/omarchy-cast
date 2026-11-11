@@ -222,3 +222,60 @@ def test_manual_entry_skips_add_when_mode_prompt_cancelled(fake_menu, monkeypatc
 
     assert cli_main._run_menu() == 0
     assert add_calls == []
+
+
+def test_menu_asks_for_pin_when_start_returns_awaiting_pin(fake_menu, monkeypatch):
+    """The TUI already prompted; the bar-launched menu treated awaiting_pin as
+    success and never opened a text field, so a TV PIN had nowhere to go."""
+    responses, walker_answers, notifications = fake_menu
+    responses["list"] = {
+        "ok": True,
+        "data": {"devices": [{"id": "airplay:1", "name": "LG TV", "protocol": "airplay"}]},
+    }
+    responses["status"] = {"ok": True, "data": {"sessions": []}}
+    responses["start"] = {"ok": True, "data": {"state": "awaiting_pin"}}
+    responses["pin"] = {"ok": True, "data": {"state": "streaming"}}
+    pin_calls = []
+    stop_calls = []
+
+    async def _request(cmd, path=None, **kwargs):
+        if cmd == "pin":
+            pin_calls.append(kwargs)
+        if cmd == "stop":
+            stop_calls.append(kwargs)
+        return responses[cmd]
+
+    monkeypatch.setattr(cli_main, "request", _request)
+    walker_answers["Cast to"] = "LG TV (AirPlay) [airplay:1]"
+    walker_answers["Mirror or extend?"] = "Mirror — show this screen on the receiver"
+    walker_answers["PIN shown on the TV"] = "4029"
+
+    assert cli_main._run_menu() == 0
+    assert pin_calls == [{"device_id": "airplay:1", "pin": "4029"}]
+    assert stop_calls == []
+    assert notifications[-1] == "Casting started — right-click the cast icon to stop"
+
+
+def test_cancelling_the_pin_prompt_stops_the_session(fake_menu, monkeypatch):
+    responses, walker_answers, notifications = fake_menu
+    responses["list"] = {
+        "ok": True,
+        "data": {"devices": [{"id": "airplay:1", "name": "LG TV", "protocol": "airplay"}]},
+    }
+    responses["status"] = {"ok": True, "data": {"sessions": []}}
+    responses["start"] = {"ok": True, "data": {"state": "awaiting_pin"}}
+    responses["stop"] = {"ok": True, "data": {"stopped": 1}}
+    stop_calls = []
+
+    async def _request(cmd, path=None, **kwargs):
+        if cmd == "stop":
+            stop_calls.append(kwargs)
+        return responses[cmd]
+
+    monkeypatch.setattr(cli_main, "request", _request)
+    walker_answers["Cast to"] = "LG TV (AirPlay) [airplay:1]"
+    walker_answers["Mirror or extend?"] = "Mirror — show this screen on the receiver"
+    walker_answers["PIN shown on the TV"] = ""
+
+    assert cli_main._run_menu() == 0
+    assert stop_calls == [{"device_id": "airplay:1"}]

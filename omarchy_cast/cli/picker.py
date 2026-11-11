@@ -27,6 +27,11 @@ OMARCHY_SELECT = "omarchy-menu-select"
 OMARCHY_INPUT = "omarchy-menu-input"
 WALKER = "walker"
 
+# Omarchy's dmenu default is 300px, which elides AirPlay names such as
+# "[LG] webOS TV UA7500ZUA (AirPlay · 55UA7500ZUA) [airplay:…]".
+OMARCHY_SELECT_WIDTH = "560"
+OMARCHY_INPUT_WIDTH = "400"
+
 
 def backend() -> str | None:
     """Which picker to use, or None if the desktop provides neither."""
@@ -52,8 +57,11 @@ def pick(prompt: str, entries: list[str]) -> str:
     """Show `entries` and return the chosen one, or "" if cancelled."""
     which = backend()
     if which == "omarchy":
-        # Options are arguments here, not stdin.
-        return _run([OMARCHY_SELECT, prompt, *entries]).strip()
+        # Options are arguments here, not stdin. Width is after "--" so it is
+        # not treated as a selectable row.
+        return _run(
+            [OMARCHY_SELECT, prompt, *entries, "--", "--width", OMARCHY_SELECT_WIDTH]
+        ).strip()
     if which == "walker":
         return _run([WALKER, "--dmenu", "-p", prompt], stdin="\n".join(entries)).strip()
 
@@ -65,7 +73,7 @@ def ask(prompt: str) -> str:
     """Prompt for free text -- an address to connect to directly."""
     which = backend()
     if which == "omarchy":
-        return _run([OMARCHY_INPUT, prompt]).strip()
+        return _run([OMARCHY_INPUT, prompt, "--width", OMARCHY_INPUT_WIDTH]).strip()
     if which == "walker":
         # walker's dmenu with no options doubles as a text prompt.
         return _run([WALKER, "--dmenu", "-p", prompt], stdin="").strip()

@@ -40,7 +40,14 @@ BIN = "doubletake"
 
 # doubletake prints this with fmt.Print -- no trailing newline -- so output must
 # be scanned as chunks, not lines.
+# Current doubletake says "receiver"; older builds said "Apple TV". A password
+# fallback uses the third string. Match any of them so a TV PIN is not missed.
 PIN_PROMPT = "Enter the PIN shown on Apple TV"
+PIN_PROMPTS = (
+    PIN_PROMPT,
+    "Enter the PIN shown on the receiver",
+    "Enter the receiver's configured password or pairing PIN",
+)
 
 # Only this marker means pixels are actually flowing. "mirror session ready"
 # is emitted ~4s earlier, as soon as the RTSP session is set up and before the
@@ -150,7 +157,7 @@ class _Session:
             self.output = self.output[-MAX_BUFFER:]
         if not self.ready.is_set() and any(m in self.output for m in READY_MARKERS):
             self.ready.set()
-        if not self.needs_pin.is_set() and PIN_PROMPT in self.output:
+        if not self.needs_pin.is_set() and any(p in self.output for p in PIN_PROMPTS):
             self.needs_pin.set()
 
     def tail(self, limit: int = 300) -> str:

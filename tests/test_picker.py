@@ -54,7 +54,15 @@ def test_omarchy_takes_options_as_arguments(monkeypatch):
     assert picker.pick("Cast to", ["Apple TV", "Meeting Room"]) == "chosen"
 
     argv, stdin = calls[0]
-    assert argv == ["omarchy-menu-select", "Cast to", "Apple TV", "Meeting Room"]
+    assert argv == [
+        "omarchy-menu-select",
+        "Cast to",
+        "Apple TV",
+        "Meeting Room",
+        "--",
+        "--width",
+        picker.OMARCHY_SELECT_WIDTH,
+    ]
     assert stdin is None
 
 
@@ -77,7 +85,12 @@ def test_text_input_uses_the_matching_program(monkeypatch):
 
     picker.ask("Receiver IP address")
 
-    assert calls[0][0] == ["omarchy-menu-input", "Receiver IP address"]
+    assert calls[0][0] == [
+        "omarchy-menu-input",
+        "Receiver IP address",
+        "--width",
+        picker.OMARCHY_INPUT_WIDTH,
+    ]
 
 
 def test_a_missing_menu_returns_empty_rather_than_raising(monkeypatch):
