@@ -155,6 +155,25 @@ def _run_menu() -> int:
         _notify(message)
         return _fail(message)
 
+    state = (result.get("data") or {}).get("state")
+    if state == "awaiting_pin":
+        _notify("Enter the PIN shown on the TV")
+        pin = picker.ask("PIN shown on the TV")
+        if not pin:
+            asyncio.run(request("stop", device_id=device_id))
+            return 0
+        pinned = asyncio.run(request("pin", device_id=device_id, pin=pin))
+        if not pinned.get("ok"):
+            message = pinned.get("error", "unknown error")
+            _notify(message)
+            return _fail(message)
+        warning = (pinned.get("data") or {}).get("warning")
+        if warning:
+            _notify(warning)
+        else:
+            _notify("Casting started — right-click the cast icon to stop")
+        return 0
+
     warning = (result.get("data") or {}).get("warning")
     if mode == EXTEND:
         # The warning (e.g. Chromecast is untested) must not swallow this:

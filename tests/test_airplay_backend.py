@@ -12,6 +12,7 @@ import pytest
 
 from omarchy_cast.backends.airplay import (
     PIN_PROMPT,
+    PIN_PROMPTS,
     READY_MARKERS,
     AirPlayBackend,
 )
@@ -166,6 +167,17 @@ async def test_ready_marker_split_across_chunks_is_still_detected():
 async def test_pin_prompt_enters_awaiting_pin():
     """The prompt has no trailing newline, so line reads would never see it."""
     proc = FakeProc([PIN_PROMPT.encode()])
+    backend, states, _ = make_backend(proc)
+    await backend.start(make_device())
+    assert states[-1][0] is SessionState.AWAITING_PIN
+    await backend.shutdown()
+
+
+@pytest.mark.parametrize("prompt", PIN_PROMPTS)
+async def test_current_doubletake_pin_wording_enters_awaiting_pin(prompt):
+    """AirPlay 2 TVs print 'receiver', not 'Apple TV'. Missing that string
+    made start() wait until doubletake exited instead of asking for a PIN."""
+    proc = FakeProc([prompt.encode()])
     backend, states, _ = make_backend(proc)
     await backend.start(make_device())
     assert states[-1][0] is SessionState.AWAITING_PIN
